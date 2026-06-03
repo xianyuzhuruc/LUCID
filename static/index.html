@@ -194,7 +194,7 @@
         </div>
         <div class="max-h-64 overflow-y-auto space-y-2" x-show="nodes.length > 0">
         <template x-for="n in nodes" :key="n.id">
-          <div class="border rounded p-3 text-xs cursor-pointer hover:border-blue-300 hover:shadow-sm transition"
+          <div class="border rounded p-2 text-xs cursor-pointer hover:border-blue-300 hover:shadow-sm transition"
                :class="launchForm.node_id === n.id ? 'ring-2 ring-blue-400' : ''"
                @click="launchForm.node_id = n.id">
             <div class="flex items-center justify-between gap-2">
@@ -202,18 +202,20 @@
                 <div class="font-semibold truncate" x-text="n.name || n.id"></div>
                 <div class="text-gray-500 truncate" x-text="nodeSubtitle(n)"></div>
               </div>
-              <span class="px-2 py-0.5 rounded-full shrink-0"
-                    :class="n.health === 'healthy' ? 'bg-emerald-100 text-emerald-700' : n.health === 'stale' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
-                    x-text="n.health"></span>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="text-gray-400" x-text="(n.window_count || 0) + ' windows'"></span>
+                <span class="px-2 py-0.5 rounded-full text-[10px]"
+                      :class="n.health === 'healthy' ? 'bg-emerald-100 text-emerald-700' : n.health === 'stale' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
+                      x-text="n.health"></span>
+              </div>
             </div>
-            <div class="mt-2 flex gap-3 text-gray-400">
-              <span x-text="(n.window_count || 0) + ' windows'"></span>
+            <div class="text-gray-400 mt-0.5" x-show="n.local_port || (n.kind === 'agent' && n.agent_port)">
               <span x-show="n.local_port" x-text="'127.0.0.1:' + n.local_port"></span>
               <span x-show="!n.local_port && n.kind === 'agent' && n.agent_port" x-text="'127.0.0.1:' + n.agent_port"></span>
             </div>
-            <div class="mt-2 flex items-center gap-2">
-              <div class="mt-0 text-[11px] text-red-600 truncate flex-1" x-show="n.error" x-text="n.error"></div>
-              <div class="ml-auto flex gap-2">
+            <div class="mt-1 flex items-center gap-2">
+              <div class="text-[11px] text-red-600 truncate flex-1" x-show="n.error" x-text="n.error"></div>
+              <div class="ml-auto flex gap-1.5">
               <button @click="removeNode(n)"
                       :disabled="removingNodeId === n.id || deletingNodeId === n.id"
                       class="shrink-0 rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-100 disabled:opacity-40"
