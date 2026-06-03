@@ -231,8 +231,23 @@ def _coerce_command(payload: dict) -> list[str]:
     return command
 
 
+# ---------- command resolution cache ----------
+
+_command_cache: dict[str, list[str]] = {}
+_node_cache: str | None = None
+
+
+def _clear_resolution_cache() -> None:
+    global _command_cache, _node_cache
+    _command_cache.clear()
+    _node_cache = None
+
+
 def _find_node_binary(candidate_dirs: list[Path] | None = None) -> str | None:
     """Search for a working ``node`` binary, preferring newest nvm install."""
+    global _node_cache
+    if _node_cache is not None:
+        return _node_cache
     search: list[Path] = list(candidate_dirs or [])
     # nvm — newest first
     nvm_versions_dir = Path.home() / ".nvm" / "versions" / "node"
@@ -260,14 +275,24 @@ def _find_node_binary(candidate_dirs: list[Path] | None = None) -> str | None:
     for base in search:
         candidate = base / "node"
         if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate)
+            _node_cache = str(candidate)
+            return _node_cache
     return None
 
 
 def _resolve_command_local(command: list[str]) -> list[str]:
+    global _command_cache
     executable = command[0] if command else ""
     if not executable:
         raise HTTPException(400, "command is required")
+    # Hit cache: already resolved this command before
+    cache_key = executable if "/" not in executable else str(Path(executable).expanduser())
+    if cache_key in _command_cache:
+        cached = _command_cache[cache_key]
+        # Re-validate: if the cached binary is gone, clear and re-resolve
+        if Path(cached[-1] if len(cached) > len(command) else cached[0]).exists():
+            return cached + command[1:]
+        _command_cache.pop(cache_key, None)
     # Already an absolute/relative path — validate it exists and is executable
     if "/" in executable:
         path = Path(executable).expanduser()
@@ -276,41 +301,45 @@ def _resolve_command_local(command: list[str]) -> list[str]:
                 400,
                 f"command not found or not executable: {executable}",
             )
-        return _maybe_node_prepend([str(path)] + command[1:])
-    # Resolve via shutil.which (respects current process PATH)
-    resolved = shutil.which(executable)
-    if resolved is not None:
-        return _maybe_node_prepend([resolved] + command[1:])
-    # PATH fallback: scan common locations the agent process may not have in
-    # its env but a user login shell would (nvm, local npm global bin, etc.)
-    _extra_dirs = [
-        Path("/usr/local/bin"),
-        Path("/usr/bin"),
-        Path.home() / ".local/bin",
-        Path.home() / "bin",
-    ]
-    # nvm — iterate every installed version so the latest node binary wins
-    nvm_versions_dir = Path.home() / ".nvm" / "versions" / "node"
-    if nvm_versions_dir.exists():
-        try:
-            versions = sorted(
-                [d for d in nvm_versions_dir.iterdir() if d.is_dir()],
-                reverse=True,
-            )
-            for vdir in versions:
-                bin_dir = vdir / "bin"
-                if bin_dir.is_dir():
-                    _extra_dirs.append(bin_dir)
-        except OSError:
-            pass
-    for base in _extra_dirs:
-        candidate = base / executable
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return _maybe_node_prepend([str(candidate)] + command[1:])
-    raise HTTPException(
-        400,
-        f"command not found on agent PATH: {executable}",
-    )
+        result = _maybe_node_prepend([str(path)] + command[1:])
+    else:
+        # Resolve via shutil.which (respects current process PATH)
+        resolved = shutil.which(executable)
+        if resolved is not None:
+            result = _maybe_node_prepend([resolved] + command[1:])
+        else:
+            # PATH fallback: scan common locations
+            _extra_dirs = [
+                Path("/usr/local/bin"),
+                Path("/usr/bin"),
+                Path.home() / ".local/bin",
+                Path.home() / "bin",
+            ]
+            nvm_versions_dir = Path.home() / ".nvm" / "versions" / "node"
+            if nvm_versions_dir.exists():
+                try:
+                    versions = sorted(
+                        [d for d in nvm_versions_dir.iterdir() if d.is_dir()],
+                        reverse=True,
+                    )
+                    for vdir in versions:
+                        bin_dir = vdir / "bin"
+                        if bin_dir.is_dir():
+                            _extra_dirs.append(bin_dir)
+                except OSError:
+                    pass
+            for base in _extra_dirs:
+                candidate = base / executable
+                if candidate.exists() and os.access(candidate, os.X_OK):
+                    result = _maybe_node_prepend([str(candidate)] + command[1:])
+                    break
+            else:
+                raise HTTPException(
+                    400,
+                    f"command not found on agent PATH: {executable}",
+                )
+    _command_cache[cache_key] = result
+    return result
 
 
 def _maybe_node_prepend(command: list[str]) -> list[str]:
@@ -327,15 +356,17 @@ def _maybe_node_prepend(command: list[str]) -> list[str]:
         return command
     if not shebang.startswith("#!") or "node" not in shebang:
         return command
-    # If the command was found through a known nvm bin, prefer the sibling node
-    parent_dir = script.parent
-    sibling = parent_dir / "node"
+    # Prefer a known-good nvm node over whatever happens to be next to the
+    # script on disk (a system-path sibling like /usr/local/bin/node is
+    # often the stale version we're trying to avoid).
+    node = _find_node_binary()
+    if node is not None:
+        return [node] + command
+    # Fallback: sibling node in the same directory
+    sibling = script.parent / "node"
     if sibling.exists() and os.access(sibling, os.X_OK):
         return [str(sibling)] + command
-    node = _find_node_binary()
-    if node is None:
-        return command
-    return [node] + command
+    return command
 
 
 def _clean_display_name(value: Any) -> str:
@@ -1299,6 +1330,7 @@ def _finish_deploy_job(job_id: str, result: dict[str, Any]) -> None:
     _set_deploy_job_progress(job_id, "succeeded", "complete", "Deployment complete")
     with DEPLOY_JOBS_LOCK:
         DEPLOY_JOBS[job_id].result = result
+    _clear_resolution_cache()
     node_id = str(result.get("node_id") or "")
     if node_id:
         nodes.invalidate_snapshot_cache(node_id)
@@ -1346,6 +1378,7 @@ def api_node_deploy(payload: dict = Body(...)) -> dict:
         req = _deploy_request_from_payload(payload)
         result = deploy_agent(req)
         nodes.invalidate_snapshot_cache(req.id)
+        _clear_resolution_cache()
         return result
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -1383,6 +1416,7 @@ def api_node_deploy_sync_all() -> dict:
         job["node_id"] = node.id
         job["node_name"] = node.display_name
         jobs.append(job)
+    _clear_resolution_cache()
     return {
         "ok": True,
         "jobs": jobs,
