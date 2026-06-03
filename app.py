@@ -1559,7 +1559,7 @@ def api_node_complete(node_id: str, platform: str, pid: int) -> dict:
     if node.kind == "local":
         data = _local_window_complete(platform, pid)
     else:
-        data = nodes.forward(node_id, "POST", f"/agent/v1/windows/{platform}/{pid}/complete")
+        data = nodes.mark_completed(node_id, platform, pid)
     if data.get("ok"):
         nodes.invalidate_snapshot_cache(node_id)
         _refresh_snapshot_cache()
@@ -1572,7 +1572,7 @@ def api_node_uncomplete(node_id: str, platform: str, pid: int) -> dict:
     if node.kind == "local":
         data = _local_window_uncomplete(platform, pid)
     else:
-        data = nodes.forward(node_id, "POST", f"/agent/v1/windows/{platform}/{pid}/uncomplete")
+        data = nodes.unmark_completed(node_id, platform, pid)
     if data.get("ok"):
         nodes.invalidate_snapshot_cache(node_id)
         _refresh_snapshot_cache()

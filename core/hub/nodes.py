@@ -32,6 +32,36 @@ SSH_HISTORY_PATH = Path(
 ).expanduser()
 SSH_HISTORY_LIMIT = 20
 REMOTE_SNAPSHOT_TTL_SECONDS = int(os.environ.get("LUCID_REMOTE_SNAPSHOT_TTL_SECONDS", "0"))
+COMPLETED_PATH = STATE_DIR / "completed_windows.json"
+
+
+def _load_completed() -> set[str]:
+    if not COMPLETED_PATH.exists():
+        return set()
+    try:
+        data = json.loads(COMPLETED_PATH.read_text(encoding="utf-8"))
+        return set(data.get("keys", []))
+    except Exception:
+        return set()
+
+
+def _save_completed(keys: set[str]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    COMPLETED_PATH.write_text(json.dumps({"keys": sorted(keys)}), encoding="utf-8")
+
+
+def mark_completed(node_id: str, platform: str, pid: int) -> dict:
+    keys = _load_completed()
+    keys.add(f"{node_id}:{platform}:{pid}")
+    _save_completed(keys)
+    return {"ok": True, "pid": pid, "platform": platform, "node_id": node_id, "completed": True}
+
+
+def unmark_completed(node_id: str, platform: str, pid: int) -> dict:
+    keys = _load_completed()
+    keys.discard(f"{node_id}:{platform}:{pid}")
+    _save_completed(keys)
+    return {"ok": True, "pid": pid, "platform": platform, "node_id": node_id, "completed": False}
 
 
 @dataclass(frozen=True)
@@ -524,8 +554,23 @@ def aggregate_snapshot() -> dict:
             for key in counts:
                 counts[key] += int((snap.get("counts") or {}).get(key, 0))
 
+    completed_keys = _load_completed()
+    triage_to_count_key = {"working": "busy", "stalled": "idle", "waiting": "waiting", "bash": "bash"}
+    for w in windows:
+        key = f"{w.get('node_id', '')}:{w.get('platform', '')}:{w.get('pid', '')}"
+        if key in completed_keys:
+            old_triage = w.get("triage", "")
+            old_key = triage_to_count_key.get(old_triage)
+            if old_key and counts.get(old_key, 0) > 0:
+                counts[old_key] -= 1
+            else:
+                counts["total"] = max(0, counts.get("total", 0) - 1)  # shouldn't happen
+            counts["completed"] = counts.get("completed", 0) + 1
+            w["triage"] = "completed"
+            w["triage_reason"] = "Completed"
+            w["activity_label"] = "Completed"
     windows.sort(key=lambda w: (
-        {"waiting": 0, "stalled": 1, "working": 2, "bash": 3}.get(w.get("triage"), 4),
+        {"waiting": 0, "stalled": 1, "working": 2, "bash": 3, "completed": 4}.get(w.get("triage"), 5),
         w.get("node_id", ""),
         -(w.get("updated_at") or 0),
     ))
