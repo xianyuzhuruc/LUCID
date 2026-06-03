@@ -244,14 +244,40 @@ def _resolve_command_local(command: list[str]) -> list[str]:
                 f"command not found or not executable: {executable}",
             )
         return [str(path)] + command[1:]
-    # Resolve via shutil.which to get the absolute path
+    # Resolve via shutil.which (respects current process PATH)
     resolved = shutil.which(executable)
-    if resolved is None:
-        raise HTTPException(
-            400,
-            f"command not found on agent PATH: {executable}",
-        )
-    return [resolved] + command[1:]
+    if resolved is not None:
+        return [resolved] + command[1:]
+    # PATH fallback: scan common locations the agent process may not have in
+    # its env but a user login shell would (nvm, local npm global bin, etc.)
+    _extra_dirs = [
+        Path("/usr/local/bin"),
+        Path("/usr/bin"),
+        Path.home() / ".local/bin",
+        Path.home() / "bin",
+    ]
+    # nvm — iterate every installed version so the latest node binary wins
+    nvm_versions_dir = Path.home() / ".nvm" / "versions" / "node"
+    if nvm_versions_dir.exists():
+        try:
+            versions = sorted(
+                [d for d in nvm_versions_dir.iterdir() if d.is_dir()],
+                reverse=True,
+            )
+            for vdir in versions:
+                bin_dir = vdir / "bin"
+                if bin_dir.is_dir():
+                    _extra_dirs.append(bin_dir)
+        except OSError:
+            pass
+    for base in _extra_dirs:
+        candidate = base / executable
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return [str(candidate)] + command[1:]
+    raise HTTPException(
+        400,
+        f"command not found on agent PATH: {executable}",
+    )
 
 
 def _clean_display_name(value: Any) -> str:
