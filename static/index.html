@@ -38,9 +38,9 @@
       <button @click="openPrimaryWindow(w)"
               class="rounded px-3 py-1 shrink-0 flex items-center gap-1 transition"
               :class="attentionButtonClass(w)">
-        <span class="inline-block w-2 h-2 rounded-full bg-white pulse-red"></span>
+        <span class="inline-block w-2 h-2 rounded-full pulse-red"
+              :class="attentionState(w) === 'waiting' ? 'bg-red-400' : attentionState(w) === 'stalled' ? 'bg-amber-400' : 'bg-gray-400'"></span>
         <span x-text="attentionNodeLabel(w)"></span>
-        <span class="opacity-70 text-xs" x-text="attentionMessage(w)"></span>
       </button>
     </template>
   </div>
@@ -188,10 +188,11 @@
           </div>
         </div>
       </div>
-      <div class="lg:col-span-1 space-y-2">
+      <div class="lg:col-span-1 space-y-2 border rounded p-3">
         <div x-show="nodes.length === 0" class="border border-dashed rounded p-4 text-xs text-gray-400">
           No nodes configured
         </div>
+        <div class="max-h-64 overflow-y-auto space-y-2" x-show="nodes.length > 0">
         <template x-for="n in nodes" :key="n.id">
           <div class="border rounded p-3 text-xs cursor-pointer hover:border-blue-300 hover:shadow-sm transition"
                :class="launchForm.node_id === n.id ? 'ring-2 ring-blue-400' : ''"
@@ -210,8 +211,9 @@
               <span x-show="n.local_port" x-text="'127.0.0.1:' + n.local_port"></span>
               <span x-show="!n.local_port && n.kind === 'agent' && n.agent_port" x-text="'127.0.0.1:' + n.agent_port"></span>
             </div>
-            <div class="mt-2 flex items-center justify-between gap-2">
+            <div class="mt-2 flex items-center gap-2">
               <div class="mt-0 text-[11px] text-red-600 truncate flex-1" x-show="n.error" x-text="n.error"></div>
+              <div class="ml-auto flex gap-2">
               <button @click="removeNode(n)"
                       :disabled="removingNodeId === n.id || deletingNodeId === n.id"
                       class="shrink-0 rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-100 disabled:opacity-40"
@@ -221,9 +223,11 @@
                       :disabled="deletingNodeId === n.id || removingNodeId === n.id"
                       class="shrink-0 rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 disabled:opacity-40"
                       x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"></button>
+              </div>
             </div>
           </div>
         </template>
+        </div>
         <div x-show="syncJobs.length || syncSkipped.length"
              x-transition
              class="border rounded p-3 text-xs">
