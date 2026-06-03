@@ -158,13 +158,6 @@ def list_windows(include_dead: bool = False) -> list[Window]:
     return windows
 
 
-def find_window(pid: int) -> Optional[Window]:
-    for w in list_windows(include_dead=True):
-        if w.pid == pid:
-            return w
-    return None
-
-
 def snapshot() -> dict:
     """Top-level state for the dashboard."""
     wins = list_windows()

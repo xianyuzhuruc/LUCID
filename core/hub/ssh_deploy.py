@@ -1,8 +1,9 @@
 """SSH bootstrap for remote LUCID agent nodes."""
 from __future__ import annotations
 
-import io
 import gzip
+import hashlib
+import io
 import http.client
 import os
 import platform as py_platform
@@ -30,6 +31,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_KEY = STATE_DIR / "id_ed25519"
 DEPLOY_CACHE = Path(os.environ.get("LUCID_DEPLOY_CACHE", str(REPO_ROOT / "deployment_package"))).expanduser()
 MICROMAMBA_URL = "https://micro.mamba.pm/api/micromamba/{platform}/latest"
+GITHUB_DEPLOYMENT_PACKAGE_URL = (
+    "https://github.com/xianyuzhuruc/LUCID/releases/download/deployment_packages/{asset}"
+)
 DOWNLOAD_RETRIES = 3
 DOWNLOAD_RETRY_DELAY_SECONDS = 2
 RUNTIME_PYTHON_VERSION = "3.11"
@@ -37,9 +41,26 @@ LINUX_VIRTUAL_PACKAGE_VERSION = "5.15.0"
 GLIBC_VIRTUAL_PACKAGE_VERSION = "2.17"
 MACOS_VIRTUAL_PACKAGE_VERSION = "13.0"
 PACKAGE_ARCHIVE_SUFFIXES = (".conda", ".tar.bz2")
-RUNTIME_BUNDLE_FORMAT_VERSION = "runtime-bundle-v2"
-SUPPORTED_AGENT_RUNTIME_PLATFORMS = ("linux-64", "linux-aarch64", "osx-arm64")
-DEFAULT_AGENT_RUNTIME_PLATFORMS = ("linux-64", "linux-aarch64", "osx-arm64")
+SUPPORTED_AGENT_RUNTIME_PLATFORMS = ("linux-amd64", "linux-aarch64", "osx-arm64")
+DEFAULT_AGENT_RUNTIME_PLATFORMS = ("linux-amd64", "linux-aarch64", "osx-arm64")
+CONDA_PLATFORM_ALIASES = {
+    "linux-amd64": "linux-64",
+}
+GITHUB_AGENT_RUNTIME_SHA256 = {
+    "linux-aarch64": "441640b3dcff86a88173dbb8e6a8a2bf342e29d910efa7fa83f0060c73b477b3",
+    "linux-amd64": "37280a4c208afd18f54c652b4e79fbac31c332a20967825c8b1af510688bcf5f",
+    "osx-arm64": "67b48e2236e70e32a60c68ffad440c85b53ad4d04ac810a522d1f666b40fa761",
+}
+GITHUB_MICROMAMBA_ASSETS = {
+    "linux-aarch64": "lucid-micromamba-linux-aarch64.gz",
+    "linux-amd64": "lucid-micromamba-linux-amd64.gz",
+    "osx-arm64": "lucid-micromamba-osx-arm64.gz",
+}
+GITHUB_MICROMAMBA_SHA256 = {
+    "linux-aarch64": "6fb5f26f6c287ad37bd59cb6f665d52ecc6314fbebec62a1ca293c6015a652c6",
+    "linux-amd64": "53bce558ff311fed7878baa73b013c70b45a2b38284b5a5048bf51cdd872570c",
+    "osx-arm64": "102993e5212967aba341dc6de7c0a4062da7d0ac439ae2624fc90714e0e744dd",
+}
 RUNTIME_PACKAGES = (
     f"python={RUNTIME_PYTHON_VERSION}",
     "tmux",
@@ -298,7 +319,7 @@ def _remote_agent_platform(client: paramiko.SSHClient) -> str:
     system = output[0].strip().lower()
     machine = output[1].strip().lower()
     if system == "linux" and machine in {"x86_64", "amd64"}:
-        return "linux-64"
+        return "linux-amd64"
     if system == "linux" and machine in {"aarch64", "arm64"}:
         return "linux-aarch64"
     if system == "darwin" and machine in {"aarch64", "arm64"}:
@@ -312,7 +333,7 @@ def _local_micromamba_platform() -> str:
     system = py_platform.system().lower()
     machine = py_platform.machine().lower()
     if system == "linux" and machine in {"x86_64", "amd64"}:
-        return "linux-64"
+        return "linux-amd64"
     if system == "linux" and machine in {"aarch64", "arm64"}:
         return "linux-aarch64"
     if system == "darwin" and machine in {"x86_64", "amd64"}:
@@ -324,10 +345,22 @@ def _local_micromamba_platform() -> str:
     raise RuntimeError(f"unsupported local micromamba platform: {system}/{machine}")
 
 
+def _conda_platform(platform: str) -> str:
+    return CONDA_PLATFORM_ALIASES.get(platform, platform)
+
+
+def _agent_runtime_asset_name(remote_platform: str) -> str:
+    return f"lucid-agent-runtime-{remote_platform}.tar.gz"
+
+
+def _micromamba_asset_name(mamba_platform: str) -> str:
+    return GITHUB_MICROMAMBA_ASSETS.get(mamba_platform, f"lucid-micromamba-{mamba_platform}.gz")
+
+
 def _ensure_cached_micromamba(mamba_platform: str, progress: DeployProgress | None = None) -> Path:
     binary_name = "micromamba.exe" if mamba_platform.startswith("win-") else "micromamba"
     target = DEPLOY_CACHE / "micromamba" / mamba_platform / binary_name
-    compressed_target = target.with_name(f"{target.name}.gz")
+    compressed_target = target.parent / _micromamba_asset_name(mamba_platform)
     if target.exists():
         _report_progress(progress, "runtime_micromamba", f"Using cached micromamba for {mamba_platform}")
         return target
@@ -337,7 +370,12 @@ def _ensure_cached_micromamba(mamba_platform: str, progress: DeployProgress | No
         return target
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    url = MICROMAMBA_URL.format(platform=mamba_platform)
+    if _download_github_micromamba(mamba_platform, compressed_target, progress):
+        _decompress_cached_micromamba(compressed_target, target)
+        return target
+
+    upstream_platform = _conda_platform(mamba_platform)
+    url = MICROMAMBA_URL.format(platform=upstream_platform)
     with tempfile.TemporaryDirectory(prefix="lucid-micromamba-", dir=str(target.parent)) as tmp_dir:
         archive = Path(tmp_dir) / "micromamba.tar.bz2"
         _download_url_to_file(url, archive, f"micromamba {mamba_platform}", progress)
@@ -363,7 +401,7 @@ def _decompress_cached_micromamba(compressed_target: Path, target: Path) -> None
 def _compress_cached_micromamba(target: Path) -> None:
     if not target.exists():
         return
-    compressed_target = target.with_name(f"{target.name}.gz")
+    compressed_target = target.parent / _micromamba_asset_name(target.parent.name)
     tmp_target = compressed_target.with_suffix(f"{compressed_target.suffix}.tmp")
     with target.open("rb") as source, gzip.open(tmp_target, "wb", compresslevel=9) as dest:
         shutil.copyfileobj(source, dest)
@@ -417,6 +455,85 @@ def _download_url_to_file(
     ) from last_error
 
 
+def _download_github_deployment_asset(
+    asset_name: str,
+    expected_sha256: str,
+    target: Path,
+    label: str,
+    progress: DeployProgress | None = None,
+) -> bool:
+    url = GITHUB_DEPLOYMENT_PACKAGE_URL.format(asset=asset_name)
+    tmp_target = target.with_suffix(f"{target.suffix}.download")
+    tmp_target.unlink(missing_ok=True)
+    try:
+        _download_url_to_file(url, tmp_target, label, progress)
+        actual_sha256 = _sha256_file(tmp_target)
+        if actual_sha256 != expected_sha256:
+            raise RuntimeError(
+                f"sha256 mismatch for {label}: expected={expected_sha256} actual={actual_sha256}"
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_target.replace(target)
+        return True
+    except Exception as exc:
+        tmp_target.unlink(missing_ok=True)
+        _report_progress(
+            progress,
+            "runtime_download_retry",
+            (
+                f"GitHub download failed for {label}: {type(exc).__name__}: {exc}. "
+                "Falling back to original download logic"
+            ),
+        )
+        return False
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_github_micromamba(
+    mamba_platform: str,
+    compressed_target: Path,
+    progress: DeployProgress | None = None,
+) -> bool:
+    asset_name = _micromamba_asset_name(mamba_platform)
+    expected_sha256 = GITHUB_MICROMAMBA_SHA256.get(mamba_platform)
+    if not expected_sha256:
+        return False
+    _report_progress(progress, "runtime_micromamba", f"Downloading cached micromamba for {mamba_platform} from GitHub")
+    return _download_github_deployment_asset(
+        asset_name,
+        expected_sha256,
+        compressed_target,
+        f"GitHub micromamba {mamba_platform}",
+        progress,
+    )
+
+
+def _download_github_agent_runtime_bundle(
+    remote_platform: str,
+    bundle: Path,
+    progress: DeployProgress | None = None,
+) -> bool:
+    asset_name = _agent_runtime_asset_name(remote_platform)
+    expected_sha256 = GITHUB_AGENT_RUNTIME_SHA256.get(remote_platform)
+    if not expected_sha256:
+        return False
+    _report_progress(progress, "runtime_download", f"Downloading {remote_platform} runtime bundle from GitHub")
+    return _download_github_deployment_asset(
+        asset_name,
+        expected_sha256,
+        bundle,
+        f"GitHub runtime bundle {remote_platform}",
+        progress,
+    )
+
+
 def _find_micromamba_member(tar: tarfile.TarFile, binary_name: str) -> tarfile.TarInfo:
     for member in tar.getmembers():
         name = member.name.replace("\\", "/").rstrip("/")
@@ -446,14 +563,15 @@ def _validate_agent_runtime_platform(platform: str) -> None:
 def _prepare_agent_runtime_bundle(remote_platform: str, progress: DeployProgress | None = None) -> Path:
     _validate_agent_runtime_platform(remote_platform)
     cache_dir = DEPLOY_CACHE / "agent-runtime" / remote_platform
-    bundle = cache_dir / f"lucid-agent-runtime-{remote_platform}.tar.gz"
-    marker = cache_dir / ".complete"
-    expected_marker = "\n".join([remote_platform, RUNTIME_BUNDLE_FORMAT_VERSION, *RUNTIME_PACKAGES]) + "\n"
-    if bundle.exists() and marker.exists() and marker.read_text(encoding="utf-8") == expected_marker:
+    bundle = cache_dir / _agent_runtime_asset_name(remote_platform)
+    if bundle.exists():
         _report_progress(progress, "runtime_cache", f"Using cached runtime bundle for {remote_platform}")
         return bundle
 
     cache_dir.mkdir(parents=True, exist_ok=True)
+    if _download_github_agent_runtime_bundle(remote_platform, bundle, progress):
+        return bundle
+
     _report_progress(progress, "runtime_micromamba", "Preparing local and remote micromamba binaries")
     host_micromamba = _ensure_cached_micromamba(_local_micromamba_platform(), progress)
     remote_micromamba = _ensure_cached_micromamba(remote_platform, progress)
@@ -469,7 +587,7 @@ def _prepare_agent_runtime_bundle(remote_platform: str, progress: DeployProgress
         str(download_prefix),
         "--download-only",
         "--platform",
-        remote_platform,
+        _conda_platform(remote_platform),
         "--override-channels",
         "-c",
         "conda-forge",
@@ -508,7 +626,6 @@ def _prepare_agent_runtime_bundle(remote_platform: str, progress: DeployProgress
             f"cache_dir={pkgs_dir}"
         )
     tmp_bundle.replace(bundle)
-    marker.write_text(expected_marker, encoding="utf-8")
     _compress_cached_micromamba(host_micromamba)
     _compress_cached_micromamba(remote_micromamba)
     shutil.rmtree(root_prefix, ignore_errors=True)

@@ -22,10 +22,3 @@ def tmux_bin() -> str:
     if candidate.exists() and os.access(candidate, os.X_OK):
         return str(candidate)
     return "tmux"
-
-
-def enable_runtime_path() -> None:
-    bin_dir = str(runtime_bin_dir())
-    parts = os.environ.get("PATH", "").split(os.pathsep)
-    if bin_dir not in parts:
-        os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")

@@ -58,21 +58,6 @@ def recent_events(limit: int = 50) -> list[PermEvent]:
     return out[-limit:]
 
 
-def pending_by_tty() -> dict[str, PermEvent]:
-    """For each TTY, the most recent 'needs authorization' event seen.
-
-    The session-level `status == "waiting"` is the source of truth for whether
-    a window is *currently* blocked; this map just enriches the dashboard with
-    the human-readable reason (the exact text the user saw in the toast).
-    """
-    out: dict[str, PermEvent] = {}
-    for ev in recent_events(limit=200):
-        if not ev.tty:
-            continue
-        out[ev.tty] = ev
-    return out
-
-
 def snapshot() -> dict:
     return {
         "log_exists": FOCUS_LOG.exists(),

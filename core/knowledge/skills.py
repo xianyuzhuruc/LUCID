@@ -1,7 +1,6 @@
 """Global skill catalog from ~/.claude/skills/ + ~/.codex/skills/ + usage stats."""
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -79,13 +78,4 @@ def list_all_skills() -> list[dict]:
                 skills.append(info)
                 seen_names.add(info["name"])
 
-    return skills
-
-
-def skills_with_usage(usage_counts: dict[str, int]) -> list[dict]:
-    """Merge skill catalog with usage counts from session transcripts."""
-    skills = list_all_skills()
-    for s in skills:
-        s["usage_count"] = usage_counts.get(s["name"], 0)
-    skills.sort(key=lambda s: (-s["usage_count"], s["name"]))
     return skills

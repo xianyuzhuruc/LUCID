@@ -8,16 +8,12 @@ from typing import Optional
 
 from core.common.text_encoding import read_utf8
 from core.conversations import codex, history, search, transcripts
-from core.knowledge import memory, plans, skills
+from core.knowledge import memory, skills
 from core.terminal import patrol, sessions
 
 
 def default_node_id() -> str:
     return os.environ.get("LUCID_NODE_ID") or socket.gethostname() or "local"
-
-
-def _window_key(node_id: str, platform: str, pid: int | str | None) -> str:
-    return f"{node_id}:{platform}:{pid or 'none'}"
 
 
 def _session_key(node_id: str, platform: str, session_id: str | None) -> str:

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.common.text_encoding import open_utf8, subprocess_text_kwargs
-from core.terminal.sessions import CLAUDE_HOME, HOME_BASE, PROJECTS_DIR
+from core.terminal.sessions import HOME_BASE, PROJECTS_DIR
 
 CODEX_HOME = HOME_BASE / ".codex"
 CODEX_SESSIONS_DIR = CODEX_HOME / "sessions"

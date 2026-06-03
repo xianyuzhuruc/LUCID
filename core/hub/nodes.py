@@ -142,14 +142,6 @@ def load_config(force: bool = False) -> HubConfig:
     return _config_cache
 
 
-def is_hub_configured() -> bool:
-    if os.environ.get("LUCID_MODE") == "hub":
-        return True
-    if not CONFIG_PATH.exists():
-        return False
-    return bool(load_config().nodes)
-
-
 def node_by_id(node_id: str) -> Optional[NodeConfig]:
     for node in load_config().nodes:
         if node.id == node_id:

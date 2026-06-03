@@ -1,8 +1,6 @@
 """Side-effectful actions: focus, fork, close, review."""
 from __future__ import annotations
 
-import os
-import signal
 import shlex
 import subprocess
 from pathlib import Path
@@ -73,47 +71,8 @@ def focus_terminal(tty: str) -> dict:
     }
 
 
-_FORK_APPLESCRIPT_ITERM = '''
-tell application "iTerm2"
-    activate
-    set newWin to (create window with default profile)
-    tell current session of newWin
-        write text {cmd}
-    end tell
-end tell
-'''
-
-
 def _claude_window(pid: int) -> Optional[dict]:
     return registry.find_managed_window("claude", pid)
-
-
-def fork_session(pid: int) -> dict:
-    """Open a new iTerm2 window and fork the session (new ID, inherits history)."""
-    w = _claude_window(pid)
-    if not w:
-        return {"ok": False, "error": f"no window pid={pid}"}
-
-    session_id = w.get("session_id") or ""
-    cwd = w.get("cwd") or str(Path.home())
-    inner = f"cd {shlex.quote(cwd)} && claude --resume {shlex.quote(session_id)} --fork-session"
-    quoted_for_applescript = '"' + inner.replace('\\', '\\\\').replace('"', '\\"') + '"'
-    script = _FORK_APPLESCRIPT_ITERM.format(cmd=quoted_for_applescript)
-
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True, timeout=10, **subprocess_text_kwargs(),
-        )
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    return {
-        "ok": proc.returncode == 0,
-        "cwd": cwd,
-        "session_id": session_id,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
-    }
 
 
 _review_results: dict[int, dict] = {}
@@ -201,59 +160,3 @@ def review_session_start(pid: int) -> dict:
 def review_session_result(pid: int) -> dict:
     """Get the result of a background review."""
     return _review_results.get(pid, {"status": "not_found"})
-
-
-def close_session(pid: int) -> dict:
-    """Send SIGTERM to a Claude Code session for graceful shutdown."""
-    w = _claude_window(pid)
-    if not w:
-        return {"ok": False, "error": f"no window pid={pid}"}
-    if not w.get("alive"):
-        return {"ok": True, "message": "already dead"}
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return {"ok": True, "message": "already dead"}
-    except PermissionError:
-        return {"ok": False, "error": "permission denied"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    return {"ok": True, "pid": pid, "message": f"SIGTERM sent to {pid}"}
-
-
-_REVIEW_PROMPT = "请 review 你刚才做的工作，检查是否有低级错误、遗漏、安全问题。列出发现的问题和修复建议。"
-
-
-def review_session(pid: int) -> dict:
-    """Open a new iTerm2 window, resume the session, and send a review prompt."""
-    w = _claude_window(pid)
-    if not w:
-        return {"ok": False, "error": f"no window pid={pid}"}
-
-    session_id = w.get("session_id") or ""
-    cwd = w.get("cwd") or str(Path.home())
-    resume_cmd = f"cd {shlex.quote(cwd)} && claude --resume {shlex.quote(session_id)}"
-    # AppleScript: open new window → type resume command → wait a bit → type review prompt
-    escaped_resume = resume_cmd.replace('\\', '\\\\').replace('"', '\\"')
-    escaped_review = _REVIEW_PROMPT.replace('\\', '\\\\').replace('"', '\\"')
-    script = f'''tell application "iTerm2"
-    activate
-    set newWin to (create window with default profile)
-    tell current session of newWin
-        write text "{escaped_resume}"
-        delay 3
-        write text "{escaped_review}"
-    end tell
-end tell'''
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True, timeout=15, **subprocess_text_kwargs(),
-        )
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    return {
-        "ok": proc.returncode == 0,
-        "pid": pid,
-        "session_id": session_id,
-    }

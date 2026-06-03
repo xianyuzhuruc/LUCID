@@ -2,9 +2,10 @@
 """Smoke-test hub/agent aggregation with two synthetic remote agents."""
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -252,17 +253,139 @@ token = "token-b"
             _stop(proc)
 
 
+def _run_deployment_package_cache_smoke(tmp: Path, ssh_deploy: Any) -> None:
+    original_deploy_cache = ssh_deploy.DEPLOY_CACHE
+    original_runtime_sha = ssh_deploy.GITHUB_AGENT_RUNTIME_SHA256
+    original_micromamba_sha = ssh_deploy.GITHUB_MICROMAMBA_SHA256
+    original_download = ssh_deploy._download_url_to_file
+    original_ensure_micromamba = ssh_deploy._ensure_cached_micromamba
+    original_local_micromamba_platform = ssh_deploy._local_micromamba_platform
+    original_subprocess_run = ssh_deploy.subprocess.run
+
+    try:
+        cache = tmp / "deployment-cache"
+        ssh_deploy.DEPLOY_CACHE = cache
+
+        runtime_bytes = b"github runtime bundle"
+        runtime_sha = hashlib.sha256(runtime_bytes).hexdigest()
+        ssh_deploy.GITHUB_AGENT_RUNTIME_SHA256 = {
+            **original_runtime_sha,
+            "linux-amd64": runtime_sha,
+        }
+        download_calls: list[str] = []
+
+        def fake_runtime_download(url: str, target: Path, _label: str, _progress: Any = None) -> None:
+            download_calls.append(url)
+            target.write_bytes(runtime_bytes)
+
+        ssh_deploy._download_url_to_file = fake_runtime_download
+        bundle = ssh_deploy._prepare_agent_runtime_bundle("linux-amd64")
+        expected_bundle = cache / "agent-runtime" / "linux-amd64" / "lucid-agent-runtime-linux-amd64.tar.gz"
+        _assert(bundle == expected_bundle, "GitHub runtime bundle used the wrong cache path")
+        _assert(bundle.read_bytes() == runtime_bytes, "GitHub runtime bundle was not cached")
+        _assert(
+            download_calls
+            and download_calls[-1].endswith("/lucid-agent-runtime-linux-amd64.tar.gz"),
+            f"GitHub runtime download used wrong URL: {download_calls}",
+        )
+        download_calls.clear()
+        _assert(ssh_deploy._prepare_agent_runtime_bundle("linux-amd64") == bundle, "cached runtime bundle was not reused")
+        _assert(not download_calls, "cached runtime bundle should not trigger another download")
+
+        micromamba_bytes = b"micromamba-bin"
+        micromamba_gz = gzip.compress(micromamba_bytes)
+        micromamba_sha = hashlib.sha256(micromamba_gz).hexdigest()
+        ssh_deploy.DEPLOY_CACHE = tmp / "deployment-micromamba-cache"
+        ssh_deploy.GITHUB_MICROMAMBA_SHA256 = {
+            **original_micromamba_sha,
+            "linux-amd64": micromamba_sha,
+        }
+
+        def fake_micromamba_download(url: str, target: Path, _label: str, _progress: Any = None) -> None:
+            download_calls.append(url)
+            target.write_bytes(micromamba_gz)
+
+        ssh_deploy._download_url_to_file = fake_micromamba_download
+        micromamba = ssh_deploy._ensure_cached_micromamba("linux-amd64")
+        compressed_micromamba = (
+            ssh_deploy.DEPLOY_CACHE
+            / "micromamba"
+            / "linux-amd64"
+            / "lucid-micromamba-linux-amd64.gz"
+        )
+        _assert(micromamba.read_bytes() == micromamba_bytes, "GitHub micromamba was not decompressed")
+        _assert(compressed_micromamba.exists(), "GitHub micromamba used the wrong compressed cache name")
+        _assert(
+            download_calls
+            and download_calls[-1].endswith("/lucid-micromamba-linux-amd64.gz"),
+            f"GitHub micromamba download used wrong URL: {download_calls}",
+        )
+
+        fallback_cache = tmp / "deployment-fallback-cache"
+        ssh_deploy.DEPLOY_CACHE = fallback_cache
+        ssh_deploy._download_url_to_file = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            urllib.error.URLError("offline")
+        )
+        host_micromamba = tmp / "host-micromamba"
+        remote_micromamba = tmp / "remote-micromamba"
+        host_micromamba.write_bytes(b"host")
+        remote_micromamba.write_bytes(b"remote")
+        micromamba_requests: list[str] = []
+
+        def fake_ensure_micromamba(platform: str, _progress: Any = None) -> Path:
+            micromamba_requests.append(platform)
+            return host_micromamba if len(micromamba_requests) == 1 else remote_micromamba
+
+        commands: list[list[str]] = []
+
+        def fake_subprocess_run(command: list[str], capture_output: bool, env: dict[str, str], timeout: int) -> Any:
+            commands.append(command)
+            pkgs = Path(env["MAMBA_ROOT_PREFIX"]) / "pkgs" / "https" / "conda.anaconda.org" / "conda-forge" / "linux-64"
+            pkgs.mkdir(parents=True)
+            (pkgs / "python-3.11.0-hfake_0.conda").write_bytes(b"package")
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        ssh_deploy._ensure_cached_micromamba = fake_ensure_micromamba
+        ssh_deploy._local_micromamba_platform = lambda: "linux-amd64"
+        ssh_deploy.subprocess.run = fake_subprocess_run
+        fallback_bundle = ssh_deploy._prepare_agent_runtime_bundle("linux-amd64")
+        _assert(fallback_bundle.exists(), "fallback runtime bundle was not created")
+        _assert(commands and "linux-64" in commands[0], "fallback micromamba download did not use conda linux-64")
+        _assert("linux-amd64" not in commands[0], "fallback micromamba command leaked LUCID platform name")
+        _assert(
+            micromamba_requests == ["linux-amd64", "linux-amd64"],
+            f"fallback requested unexpected micromamba platforms: {micromamba_requests}",
+        )
+        with tarfile.open(fallback_bundle, "r:gz") as tar:
+            names = tar.getnames()
+        _assert("bin/micromamba" in names, "fallback runtime bundle missed micromamba")
+        _assert(
+            any(name.endswith("python-3.11.0-hfake_0.conda") for name in names),
+            "fallback runtime bundle missed package cache",
+        )
+    finally:
+        ssh_deploy.DEPLOY_CACHE = original_deploy_cache
+        ssh_deploy.GITHUB_AGENT_RUNTIME_SHA256 = original_runtime_sha
+        ssh_deploy.GITHUB_MICROMAMBA_SHA256 = original_micromamba_sha
+        ssh_deploy._download_url_to_file = original_download
+        ssh_deploy._ensure_cached_micromamba = original_ensure_micromamba
+        ssh_deploy._local_micromamba_platform = original_local_micromamba_platform
+        ssh_deploy.subprocess.run = original_subprocess_run
+
+
 def _run_deploy_config_smoke(tmp: Path) -> None:
     os.environ["LUCID_STATE_DIR"] = str(tmp / "state")
     os.environ["LUCID_NODES"] = str(tmp / "nodes-deploy.toml")
     from core.hub import nodes, ssh_deploy
     from app import api_nodes
 
+    _run_deployment_package_cache_smoke(tmp, ssh_deploy)
+
     key = tmp / "state" / "id_ed25519"
     key.parent.mkdir(parents=True, exist_ok=True)
     key.write_text("private", encoding="utf-8")
     key.with_suffix(".pub").write_text("ssh-ed25519 fake", encoding="utf-8")
-    runtime_bundle = tmp / "runtime-linux-64.tar.gz"
+    runtime_bundle = tmp / "runtime-linux-amd64.tar.gz"
     runtime_bundle.write_bytes(b"runtime")
 
     class _SftpFile:
@@ -343,7 +466,7 @@ def _run_deploy_config_smoke(tmp: Path) -> None:
     ssh_deploy._ensure_local_key = lambda: key
     ssh_deploy._build_archive = lambda: b"archive"
     ssh_deploy._pick_local_port = lambda: 19001
-    ssh_deploy._remote_agent_platform = lambda _client: "linux-64"
+    ssh_deploy._remote_agent_platform = lambda _client: "linux-amd64"
     ssh_deploy._prepare_agent_runtime_bundle = lambda _platform, _progress=None: runtime_bundle
     ssh_deploy._run = fake_run
     ssh_deploy.ensure_tunnels = lambda _config: None
@@ -355,7 +478,7 @@ def _run_deploy_config_smoke(tmp: Path) -> None:
         ssh_deploy._tail_process_output(b"micromamba \x96 output") == r"micromamba \x96 output",
         "invalid process output bytes should be escaped",
     )
-    linux_env = ssh_deploy._micromamba_download_env(tmp / "mamba-root", "linux-64")
+    linux_env = ssh_deploy._micromamba_download_env(tmp / "mamba-root", "linux-amd64")
     _assert(linux_env["CONDA_OVERRIDE_LINUX"], "linux runtime download should override __linux")
     _assert(linux_env["CONDA_OVERRIDE_GLIBC"], "linux runtime download should override __glibc")
     osx_env = ssh_deploy._micromamba_download_env(tmp / "mamba-root", "osx-arm64")
@@ -413,7 +536,7 @@ def _run_deploy_config_smoke(tmp: Path) -> None:
     _assert(connect_calls[-1]["allow_agent"] is False, "password deploy should not use ssh agent")
     _assert(result["python"] == "/remote/lucid/.lucid-runtime/env/bin/python", "deploy did not use bundled Python")
     _assert(result["agent_port"] == 18888, "deploy did not use auto-selected agent port")
-    _assert(any("lucid-runtime-linux-64" in path for path in uploads), "deploy did not upload runtime bundle")
+    _assert(any("lucid-runtime-linux-amd64" in path for path in uploads), "deploy did not upload runtime bundle")
     _assert(any("micromamba\" create" in command for command in commands), "deploy did not install runtime offline")
     _assert(
         any("--file \"$bundle_dir/runtime-explicit.txt\"" in command for command in commands),

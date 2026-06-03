@@ -148,27 +148,6 @@ def timeline(path: str | Path, limit: int = 50) -> list[dict]:
     return [e.__dict__ for e in events[-limit:]]
 
 
-def current_task_hint(path: str | Path) -> Optional[str]:
-    """Best-effort one-liner of what this session is currently doing."""
-    p = Path(path)
-    if not p.exists():
-        return None
-    raw = _tail_lines(p, 30)
-    # Walk back to the most informative event.
-    for d in reversed(raw):
-        for ev in reversed(_normalize(d)):
-            if ev.kind == "tool_use" and ev.tool:
-                key_args = ", ".join(f"{k}={v!r}" for k, v in list(ev.extra.items())[:2])
-                return f"{ev.tool}({key_args})" if key_args else ev.tool
-            if ev.kind == "assistant_text" and ev.text.strip():
-                first = ev.text.strip().splitlines()[0]
-                return first[:160]
-            if ev.kind == "user_text" and ev.text.strip():
-                first = ev.text.strip().splitlines()[0]
-                return f"↳ {first[:160]}"
-    return None
-
-
 def extract_skills_used(path: str | Path) -> list[str]:
     """Extract unique skill names invoked via the Skill tool."""
     counts = count_skill_invocations(path)
@@ -333,40 +312,6 @@ def extract_memory_ops(path: str | Path) -> list[dict]:
                     entry["content_preview"] = f"-{old}\n+{new}" if old else new[:200]
                 ops.append(entry)
     return ops
-
-
-def extract_background_tasks(path: str | Path) -> list[dict]:
-    """Extract ACTIVE (unresolved) background Bash/Monitor tasks."""
-    p = Path(path)
-    if not p.exists():
-        return []
-    bg_by_id: dict[str, dict] = {}
-    resolved_ids: set[str] = set()
-    for d in _iter_lines(p):
-        if d.get("type") == "assistant":
-            for c in ((d.get("message") or {}).get("content") or []):
-                if not isinstance(c, dict) or c.get("type") != "tool_use":
-                    continue
-                name = c.get("name", "")
-                inp = c.get("input") or {}
-                tid = c.get("id", "")
-                if name == "Bash" and inp.get("run_in_background") and tid:
-                    bg_by_id[tid] = {
-                        "type": "bash_bg",
-                        "description": (inp.get("description") or "")[:200],
-                        "command": (inp.get("command") or "")[:200],
-                    }
-                elif name == "Monitor" and inp.get("persistent") and tid:
-                    bg_by_id[tid] = {
-                        "type": "monitor",
-                        "description": (inp.get("description") or "")[:200],
-                        "command": (inp.get("command") or "")[:200],
-                    }
-        elif d.get("type") == "user":
-            for c in ((d.get("message") or {}).get("content") or []):
-                if isinstance(c, dict) and c.get("type") == "tool_result":
-                    resolved_ids.add(c.get("tool_use_id", ""))
-    return [t for tid, t in bg_by_id.items() if tid not in resolved_ids]
 
 
 def extract_plan_history(path: str | Path) -> list[dict]:

@@ -82,11 +82,6 @@ def mem_read(name: str, tid: str) -> dict:
     return t_tool("Read", {"file_path": f"{DISPLAY_CLAUDE}/projects/{SLUG}/memory/{name}.md"}, tid)
 
 
-def mem_write(name: str, content: str, tid: str) -> dict:
-    return t_tool("Write", {"file_path": f"{DISPLAY_CLAUDE}/projects/{SLUG}/memory/{name}.md",
-                            "content": content}, tid)
-
-
 def skill_file_read(skill: str, tid: str) -> dict:
     return t_tool("Read", {"file_path": f"{DISPLAY_CLAUDE}/skills/{skill}/SKILL.md"}, tid)
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Optional
 
 from core.common.text_encoding import read_utf8
@@ -88,7 +87,6 @@ def _parse_memory_index(index_path) -> set:
     Any memory in this index is implicitly loaded into every session's
     system prompt by the harness.
     """
-    import re
     names: set[str] = set()
     try:
         text = read_utf8(index_path)
