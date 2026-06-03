@@ -1072,7 +1072,7 @@ function superCliTerminal() {
     },
 
     attentionNodeLabel(w) {
-      return w.node_name || w.node_id || 'local';
+      return w.name || w.display_name || w.project_name || w.node_name || w.node_id || 'local';
     },
 
     attentionMessage(w) {
