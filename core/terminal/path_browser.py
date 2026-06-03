@@ -108,6 +108,30 @@ def _clean_upload_name(filename: str) -> str:
     return name
 
 
+class CreateDirResult(TypedDict):
+    ok: bool
+    directory: str
+    path: str
+    name: str
+
+
+def create_directory(raw_directory: str | None, dirname: str) -> CreateDirResult:
+    parent = _resolve_directory(raw_directory)
+    if not os.access(parent, os.W_OK | os.X_OK):
+        raise PermissionError(f"directory is not writable: {parent}")
+    name = _clean_upload_name(dirname)
+    target = parent / name
+    if target.exists():
+        raise FileExistsError(f"path already exists: {target}")
+    target.mkdir(mode=0o755, parents=False)
+    return {
+        "ok": True,
+        "directory": str(parent),
+        "path": str(target.resolve(strict=True)),
+        "name": name,
+    }
+
+
 def save_uploaded_file(raw_directory: str | None, filename: str, content: bytes) -> UploadResult:
     directory = _resolve_directory(raw_directory)
     if not os.access(directory, os.W_OK | os.X_OK):

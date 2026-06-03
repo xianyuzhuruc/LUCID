@@ -272,8 +272,34 @@
                       class="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Home</button>
               <div class="min-w-0 flex-1 truncate font-mono text-[11px] text-gray-600"
                    x-text="pathBrowser.path || 'Loading...'"></div>
+              <button @click="launchNewDirOpen = true; launchNewDirName = ''; launchNewDirError = ''; $nextTick(() => $refs.launchNewDirInput?.focus())"
+                      :disabled="!pathBrowser.path || pathBrowser.loading"
+                      class="rounded border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+                New Dir</button>
               <button @click="pathBrowser.open = false"
                       class="text-gray-400 hover:text-gray-700">&times;</button>
+            </div>
+            <div x-show="launchNewDirOpen"
+                 x-transition
+                 class="border-b border-emerald-200 bg-emerald-50 px-3 py-2">
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] font-semibold text-emerald-700 shrink-0">New Dir:</span>
+                <input x-ref="launchNewDirInput"
+                       class="min-w-0 flex-1 rounded border border-emerald-300 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
+                       placeholder="folder name"
+                       x-model="launchNewDirName"
+                       @keydown.escape.prevent="launchNewDirOpen = false; launchNewDirError = ''"
+                       @keydown.enter.prevent="createLaunchNewDir()"
+                       :disabled="launchNewDirCreating">
+                <button @click="createLaunchNewDir()"
+                        :disabled="launchNewDirCreating || !launchNewDirName.trim()"
+                        class="rounded border border-emerald-300 bg-emerald-600 px-2 py-1 text-[11px] text-white hover:bg-emerald-700 disabled:opacity-40 shrink-0"
+                        x-text="launchNewDirCreating ? 'Creating...' : 'Create'"></button>
+                <button @click="launchNewDirOpen = false; launchNewDirError = ''"
+                        :disabled="launchNewDirCreating"
+                        class="text-gray-400 hover:text-gray-600 shrink-0">&times;</button>
+              </div>
+              <div x-show="launchNewDirError" class="mt-1 truncate text-[11px] text-red-600" x-text="launchNewDirError"></div>
             </div>
             <div class="max-h-56 overflow-y-auto bg-white">
               <div x-show="pathBrowser.loading" class="px-3 py-4 text-xs text-gray-400">Loading path...</div>
@@ -521,6 +547,10 @@
                   :disabled="!terminalExplorer.path || terminalExplorer.loading || terminalExplorer.uploading"
                   class="rounded border border-blue-200 bg-white px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 disabled:opacity-40"
                   x-text="terminalExplorer.uploading ? 'Uploading...' : 'Upload'"></button>
+          <button @click="newDirOpen = true; newDirName = ''; newDirError = ''; $nextTick(() => $refs.newDirInput?.focus())"
+                  :disabled="!terminalExplorer.path || terminalExplorer.loading"
+                  class="rounded border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+            New Dir</button>
           <input x-ref="terminalUploadInput"
                  type="file"
                  class="hidden"
@@ -534,6 +564,28 @@
           <div x-show="terminalExplorer.uploadError"
                class="mt-1 truncate text-[11px] text-red-600"
                x-text="terminalExplorer.uploadError"></div>
+        </div>
+        <div x-show="newDirOpen"
+             x-transition
+             class="border-b border-emerald-200 bg-emerald-50 px-3 py-2">
+          <div class="flex items-center gap-2">
+            <span class="text-[11px] font-semibold text-emerald-700 shrink-0">New Dir:</span>
+            <input x-ref="newDirInput"
+                   class="min-w-0 flex-1 rounded border border-emerald-300 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
+                   placeholder="folder name"
+                   x-model="newDirName"
+                   @keydown.escape.prevent="newDirOpen = false; newDirError = ''"
+                   @keydown.enter.prevent="createNewDir()"
+                   :disabled="newDirCreating">
+            <button @click="createNewDir()"
+                    :disabled="newDirCreating || !newDirName.trim()"
+                    class="rounded border border-emerald-300 bg-emerald-600 px-2 py-1 text-[11px] text-white hover:bg-emerald-700 disabled:opacity-40 shrink-0"
+                    x-text="newDirCreating ? 'Creating...' : 'Create'"></button>
+            <button @click="newDirOpen = false; newDirError = ''"
+                    :disabled="newDirCreating"
+                    class="text-gray-400 hover:text-gray-600 shrink-0">&times;</button>
+          </div>
+          <div x-show="newDirError" class="mt-1 truncate text-[11px] text-red-600" x-text="newDirError"></div>
         </div>
         <div class="h-96 overflow-y-auto bg-white lg:h-auto lg:flex-1">
           <div x-show="terminalExplorer.loading" class="px-3 py-4 text-xs text-gray-400">Loading path...</div>
@@ -914,6 +966,10 @@ function superCliTerminal() {
       error: '',
       uploadError: '',
     },
+    newDirOpen: false,
+    newDirName: '',
+    newDirCreating: false,
+    newDirError: '',
     editor: {
       path: '',
       content: '',
@@ -965,6 +1021,10 @@ function superCliTerminal() {
       entries: [],
       error: '',
     },
+    launchNewDirOpen: false,
+    launchNewDirName: '',
+    launchNewDirCreating: false,
+    launchNewDirError: '',
 
     get attentionWindows() {
       return this.windows.filter(w => !this.isBashWindow(w) && this.attentionState(w) !== 'working');
@@ -1069,6 +1129,10 @@ function superCliTerminal() {
     nodePathUrl(nodeId, path) {
       const query = path ? `?path=${encodeURIComponent(path)}` : '';
       return `/api/nodes/${encodeURIComponent(nodeId || 'local')}/paths${query}`;
+    },
+
+    nodePathCreateUrl(nodeId) {
+      return `/api/nodes/${encodeURIComponent(nodeId || 'local')}/paths`;
     },
 
     nodeFileUrl(nodeId, path) {
@@ -1259,6 +1323,9 @@ function superCliTerminal() {
         error: '',
         uploadError: '',
       };
+      this.newDirOpen = false;
+      this.newDirName = '';
+      this.newDirError = '';
       this.$nextTick(() => {
         this.$refs.terminalPanel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         this.startTerminalSession();
@@ -1366,6 +1433,40 @@ function superCliTerminal() {
       } finally {
         this.terminalExplorer.uploading = false;
         input.value = '';
+      }
+    },
+
+    async createNewDir() {
+      const name = (this.newDirName || '').trim();
+      if (!name) return;
+      if (!this.terminalWindow) return;
+      const directory = this.terminalExplorer.path || this.terminalWindow.cwd || '';
+      if (!directory) {
+        this.newDirError = 'No current directory';
+        return;
+      }
+      this.newDirCreating = true;
+      this.newDirError = '';
+      try {
+        const r = await fetch(this.nodePathCreateUrl(this.terminalWindow.node_id || 'local'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ directory, name }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          const message = d.detail || d.error || 'Create directory failed';
+          this.newDirError = message;
+          return;
+        }
+        this.newDirOpen = false;
+        this.newDirName = '';
+        await this.loadTerminalPath(d.path || directory);
+        this.toast('Created ' + (d.name || name));
+      } catch (e) {
+        this.newDirError = String(e.message || e);
+      } finally {
+        this.newDirCreating = false;
       }
     },
 
@@ -1556,6 +1657,9 @@ function superCliTerminal() {
         error: '',
         uploadError: '',
       };
+      this.newDirOpen = false;
+      this.newDirName = '';
+      this.newDirError = '';
     },
 
     async reconnectTerminal() {
@@ -2200,6 +2304,8 @@ function superCliTerminal() {
     async togglePathBrowser() {
       if (this.pathBrowser.open) {
         this.pathBrowser.open = false;
+        this.launchNewDirOpen = false;
+        this.launchNewDirError = '';
         return;
       }
       await this.openPathBrowser();
@@ -2246,6 +2352,39 @@ function superCliTerminal() {
         return;
       }
       await this.loadPath(entry.path);
+    },
+
+    async createLaunchNewDir() {
+      const name = (this.launchNewDirName || '').trim();
+      if (!name) return;
+      const directory = this.pathBrowser.path || '';
+      if (!directory) {
+        this.launchNewDirError = 'No current directory';
+        return;
+      }
+      this.launchNewDirCreating = true;
+      this.launchNewDirError = '';
+      try {
+        const r = await fetch(`/api/nodes/${encodeURIComponent(this.launchForm.node_id)}/paths`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ directory, name }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          const message = d.detail || d.error || 'Create directory failed';
+          this.launchNewDirError = message;
+          return;
+        }
+        this.launchNewDirOpen = false;
+        this.launchNewDirName = '';
+        await this.loadPath(d.path || directory);
+        this.toast('Created ' + (d.name || name));
+      } catch (e) {
+        this.launchNewDirError = String(e.message || e);
+      } finally {
+        this.launchNewDirCreating = false;
+      }
     },
 
     async deployNode() {

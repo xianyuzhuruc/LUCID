@@ -335,6 +335,27 @@ def _local_file_delete(raw_path: str) -> dict:
     return result
 
 
+def _local_path_create(payload: dict) -> dict:
+    directory = str(payload.get("directory") or "")
+    name = str(payload.get("name") or "")
+    if not name.strip():
+        raise HTTPException(400, "directory name is required")
+    try:
+        return path_browser.create_directory(directory or None, name)
+    except FileNotFoundError as e:
+        raise HTTPException(404, f"parent directory does not exist: {directory or Path.home()}") from e
+    except NotADirectoryError as e:
+        raise HTTPException(400, str(e)) from e
+    except FileExistsError as e:
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(403, f"directory is not writable: {directory or Path.home()}") from e
+    except OSError as e:
+        raise HTTPException(400, f"create directory failed for {directory or Path.home()}: {e}") from e
+
+
 def _local_file_upload(payload: dict) -> dict:
     directory = str(payload.get("directory") or "")
     name = str(payload.get("name") or "")
@@ -1039,6 +1060,14 @@ def api_node_paths(node_id: str, path: str = "") -> dict:
     return nodes.forward(node_id, "GET", f"/agent/v1/paths{suffix}")
 
 
+@app.post("/api/nodes/{node_id}/paths")
+def api_node_path_create(node_id: str, payload: dict = Body(...)) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _local_path_create(payload)
+    return nodes.forward(node_id, "POST", "/agent/v1/paths", payload)
+
+
 @app.get("/api/nodes/{node_id}/files")
 def api_node_file_read(node_id: str, path: str = "") -> dict:
     node = _configured_node(node_id)
@@ -1525,6 +1554,12 @@ def agent_memory_detail(name: str, authorization: str | None = Header(None)) -> 
 def agent_paths(path: str = "", authorization: str | None = Header(None)) -> dict:
     _require_agent_auth(authorization)
     return _local_path_list(path or None)
+
+
+@app.post("/agent/v1/paths")
+def agent_path_create(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _local_path_create(payload)
 
 
 @app.get("/agent/v1/files")
