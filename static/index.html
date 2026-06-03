@@ -544,9 +544,9 @@
                 x-show="terminalWindow?.triage !== 'completed'"
                 class="text-xs border border-blue-300 text-blue-600 px-2 py-1 rounded hover:bg-blue-50">Complete</button>
         <button @click="reconnectTerminal()"
-                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50"
+                class="text-xs border px-2 py-1 rounded"
+                :class="terminalWindow?.triage === 'completed' ? 'border-green-300 text-green-600 hover:bg-green-50' : 'border-gray-200 text-gray-600 hover:bg-gray-50'"
                 x-text="terminalWindow?.triage === 'completed' ? 'Start' : 'Reconnect'"></button>
-                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Reconnect</button>
         <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
       </div>
     </div>
