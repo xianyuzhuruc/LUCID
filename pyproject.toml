@@ -2,7 +2,7 @@
 name = "LUCID"
 version = "0.1.0"
 description = "Local web dashboard for multi-window Claude Code orchestration"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "fastapi>=0.115",
     "paramiko>=3.5",
@@ -10,13 +10,16 @@ dependencies = [
     "uvicorn>=0.32",
     "websockets>=10.4",
     "sse-starlette>=2.1",
+    # PEP 604 (X | Y) annotations are evaluated at runtime by FastAPI/pydantic;
+    # this backport makes that work on Python < 3.10.
+    "eval_type_backport>=0.2; python_version < '3.10'",
 ]
 
 [project.scripts]
 lucid = "core.terminal.runner:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

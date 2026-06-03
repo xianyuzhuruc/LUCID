@@ -32,7 +32,7 @@ LUCID 是一个用于集中监控和操作 Claude Code、Codex
 启动：
 
 ```bash
-git clone https://github.com/tianyilt/LUCID
+git clone https://github.com/xianyuzhuruc/LUCID
 cd LUCID
 bash run.sh
 ```

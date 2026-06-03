@@ -39,7 +39,7 @@ Requirements:
 Start the dashboard:
 
 ```bash
-git clone https://github.com/tianyilt/LUCID
+git clone https://github.com/xianyuzhuruc/LUCID
 cd LUCID
 bash run.sh
 ```
