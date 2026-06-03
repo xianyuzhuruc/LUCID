@@ -231,14 +231,27 @@ def _coerce_command(payload: dict) -> list[str]:
     return command
 
 
-def _command_exists(command: list[str]) -> bool:
+def _resolve_command_local(command: list[str]) -> list[str]:
     executable = command[0] if command else ""
     if not executable:
-        return False
+        raise HTTPException(400, "command is required")
+    # Already an absolute/relative path — validate it exists and is executable
     if "/" in executable:
         path = Path(executable).expanduser()
-        return path.exists() and os.access(path, os.X_OK)
-    return shutil.which(executable) is not None
+        if not (path.exists() and os.access(path, os.X_OK)):
+            raise HTTPException(
+                400,
+                f"command not found or not executable: {executable}",
+            )
+        return [str(path)] + command[1:]
+    # Resolve via shutil.which to get the absolute path
+    resolved = shutil.which(executable)
+    if resolved is None:
+        raise HTTPException(
+            400,
+            f"command not found on agent PATH: {executable}",
+        )
+    return [resolved] + command[1:]
 
 
 def _clean_display_name(value: Any) -> str:
@@ -1691,15 +1704,10 @@ def agent_launch(payload: dict = Body(...), authorization: str | None = Header(N
         raise HTTPException(400, f"cwd does not exist: {cwd}")
     if not cwd_path.is_dir():
         raise HTTPException(400, f"cwd is not a directory: {cwd}")
-    if not _command_exists(command):
-        return {
-            "ok": False,
-            "error": f"command not found on agent PATH: {command[0]}",
-            "hint": f"Install {platform} on this node or use an absolute command path.",
-        }
+    resolved_command = _resolve_command_local(command)
     display_name = _clean_display_name(payload.get("display_name") or payload.get("name"))
     if payload.get("tmux", True):
-        return runner.launch_tmux(platform, command, cwd=str(cwd_path), display_name=display_name)
+        return runner.launch_tmux(platform, resolved_command, cwd=str(cwd_path), display_name=display_name)
     raise HTTPException(400, "non-tmux launch is not supported by the HTTP agent")
 
 
