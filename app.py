@@ -269,9 +269,6 @@ def _find_node_binary(candidate_dirs: list[Path] | None = None) -> str | None:
         Path.home() / ".local/bin",
         Path.home() / "bin",
     ])
-    resolved = shutil.which("node")
-    if resolved:
-        search.insert(0, Path(resolved).parent)
     for base in search:
         candidate = base / "node"
         if candidate.exists() and os.access(candidate, os.X_OK):

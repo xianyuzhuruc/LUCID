@@ -36,7 +36,7 @@ def enriched_snapshot() -> dict:
     Unmanaged Claude Code live-window scanning is intentionally disabled. Claude
     history, search, and timelines still read ~/.claude transcripts elsewhere.
     """
-    return {"windows": [], "counts": {"total": 0, "busy": 0, "waiting": 0, "idle": 0}, "ts": int(time.time() * 1000)}
+    return {"windows": [], "counts": {"total": 0, "busy": 0, "waiting": 0, "idle": 0, "bash": 0}, "ts": int(time.time() * 1000)}
 
 
 def wire_snapshot(node_id: Optional[str] = None, node_name: Optional[str] = None) -> dict:
@@ -54,6 +54,7 @@ def wire_snapshot(node_id: Optional[str] = None, node_name: Optional[str] = None
         snap["counts"]["busy"] += sum(1 for w in managed if w.get("triage") == "working")
         snap["counts"]["waiting"] += sum(1 for w in managed if w.get("triage") == "waiting")
         snap["counts"]["idle"] += sum(1 for w in managed if w.get("triage") == "stalled")
+        snap["counts"]["bash"] += sum(1 for w in managed if w.get("triage") == "bash")
         snap["windows"].sort(key=lambda w: (
             patrol.TRIAGE_PRIORITY.get(w.get("triage", ""), 99),
             -w.get("updated_at", 0),

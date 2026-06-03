@@ -489,7 +489,7 @@ def aggregate_snapshot() -> dict:
     ensure_tunnels(cfg)
     windows: list[dict] = []
     nodes_out: list[dict] = []
-    counts = {"total": 0, "busy": 0, "waiting": 0, "idle": 0}
+    counts = {"total": 0, "busy": 0, "waiting": 0, "idle": 0, "bash": 0}
 
     with ThreadPoolExecutor(max_workers=max(1, len(cfg.nodes))) as pool:
         futs = {pool.submit(_snapshot_for_node, node, cfg.request_timeout_ms): node for node in cfg.nodes}
@@ -525,7 +525,7 @@ def aggregate_snapshot() -> dict:
                 counts[key] += int((snap.get("counts") or {}).get(key, 0))
 
     windows.sort(key=lambda w: (
-        {"waiting": 0, "stalled": 1, "working": 2}.get(w.get("triage"), 3),
+        {"waiting": 0, "stalled": 1, "working": 2, "bash": 3}.get(w.get("triage"), 4),
         w.get("node_id", ""),
         -(w.get("updated_at") or 0),
     ))
@@ -588,7 +588,7 @@ def _stale_snapshot(node: NodeConfig, error: str, cfg: HubConfig) -> dict:
         return {
             "node": {"id": node.id, "hostname": node.host or node.ssh_host},
             "windows": [],
-            "counts": {"total": 0, "busy": 0, "waiting": 0, "idle": 0},
+            "counts": {"total": 0, "busy": 0, "waiting": 0, "idle": 0, "bash": 0},
             "node_health": health,
             "error": error,
         }

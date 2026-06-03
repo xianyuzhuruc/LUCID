@@ -145,7 +145,7 @@ def extract_codex_session_activity(path: Path | str) -> dict:
                 if payload.get("type") != "function_call":
                     continue
                 name = payload.get("name", "")
-                if name != "exec_command":
+                if name not in ("exec_command", "Bash"):
                     continue
 
                 args_str = payload.get("arguments", "")

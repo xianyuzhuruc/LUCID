@@ -961,13 +961,13 @@ def cleanup_remote_node(node_id: str) -> dict:
     connect_kwargs["look_for_keys"] = True
     connect_kwargs["allow_agent"] = True
 
-    remote_dir = "~/.lucid/agent"
+    remote_dir = node.remote_dir or "~/.lucid/agent"
     try:
         client.connect(**connect_kwargs)
         remote_dir = _remote_expand(client, node.remote_dir or "~/.lucid/agent")
         # 1) Stop the agent process
         _stop_remote_agent(client, node_id, remote_dir)
-        # 2) Kill any remaining processes in the remote dir cwd
+        # 2) Remove pidfile, log, and agent directory
         safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", node_id)
         _run(client, (
             "set +e\n"
@@ -977,14 +977,7 @@ def cleanup_remote_node(node_id: str) -> dict:
             'echo "done"\n'
         ), check=False, timeout=30)
     except Exception as e:
-        try:
-            client.close()
-        except Exception:
-            pass
         return {"ok": False, "error": str(e), "node_id": node_id, "remote_dir": remote_dir}
     finally:
-        try:
-            client.close()
-        except Exception:
-            pass
+        client.close()
     return {"ok": True, "node_id": node_id, "host": node.host or node.ssh_host, "remote_dir": remote_dir}
