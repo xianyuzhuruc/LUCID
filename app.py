@@ -231,6 +231,39 @@ def _coerce_command(payload: dict) -> list[str]:
     return command
 
 
+def _find_node_binary(candidate_dirs: list[Path] | None = None) -> str | None:
+    """Search for a working ``node`` binary, preferring newest nvm install."""
+    search: list[Path] = list(candidate_dirs or [])
+    # nvm — newest first
+    nvm_versions_dir = Path.home() / ".nvm" / "versions" / "node"
+    if nvm_versions_dir.exists():
+        try:
+            versions = sorted(
+                [d for d in nvm_versions_dir.iterdir() if d.is_dir()],
+                reverse=True,
+            )
+            for vdir in versions:
+                bin_dir = vdir / "bin"
+                if bin_dir.is_dir():
+                    search.append(bin_dir)
+        except OSError:
+            pass
+    search.extend([
+        Path("/usr/local/bin"),
+        Path("/usr/bin"),
+        Path.home() / ".local/bin",
+        Path.home() / "bin",
+    ])
+    resolved = shutil.which("node")
+    if resolved:
+        search.insert(0, Path(resolved).parent)
+    for base in search:
+        candidate = base / "node"
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
 def _resolve_command_local(command: list[str]) -> list[str]:
     executable = command[0] if command else ""
     if not executable:
@@ -243,11 +276,11 @@ def _resolve_command_local(command: list[str]) -> list[str]:
                 400,
                 f"command not found or not executable: {executable}",
             )
-        return [str(path)] + command[1:]
+        return _maybe_node_prepend([str(path)] + command[1:])
     # Resolve via shutil.which (respects current process PATH)
     resolved = shutil.which(executable)
     if resolved is not None:
-        return [resolved] + command[1:]
+        return _maybe_node_prepend([resolved] + command[1:])
     # PATH fallback: scan common locations the agent process may not have in
     # its env but a user login shell would (nvm, local npm global bin, etc.)
     _extra_dirs = [
@@ -273,11 +306,36 @@ def _resolve_command_local(command: list[str]) -> list[str]:
     for base in _extra_dirs:
         candidate = base / executable
         if candidate.exists() and os.access(candidate, os.X_OK):
-            return [str(candidate)] + command[1:]
+            return _maybe_node_prepend([str(candidate)] + command[1:])
     raise HTTPException(
         400,
         f"command not found on agent PATH: {executable}",
     )
+
+
+def _maybe_node_prepend(command: list[str]) -> list[str]:
+    """If ``command[0]`` is a Node.js script (shebang ``#!/usr/bin/env node``),
+    prepend a matching ``node`` binary so the tmux session doesn't pick up
+    an old system node that lacks top-level-await support."""
+    script = Path(command[0])
+    if script.suffix == ".node":
+        # native binary — no shebang needed
+        return command
+    try:
+        shebang = script.read_text(encoding="utf-8")[:128]
+    except (OSError, UnicodeDecodeError):
+        return command
+    if not shebang.startswith("#!") or "node" not in shebang:
+        return command
+    # If the command was found through a known nvm bin, prefer the sibling node
+    parent_dir = script.parent
+    sibling = parent_dir / "node"
+    if sibling.exists() and os.access(sibling, os.X_OK):
+        return [str(sibling)] + command
+    node = _find_node_binary()
+    if node is None:
+        return command
+    return [node] + command
 
 
 def _clean_display_name(value: Any) -> str:
