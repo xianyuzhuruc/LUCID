@@ -143,16 +143,15 @@
             </div>
             <div class="mt-2 flex items-center justify-between gap-2">
               <div class="mt-0 text-[11px] text-red-600 truncate flex-1" x-show="n.error" x-text="n.error"></div>
-              <button @click="deleteNode(n)"
-                      :disabled="deletingNodeId === n.id || removingNodeId === n.id"
-                      class="shrink-0 rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 disabled:opacity-40"
-                      x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"
-                      x-show="n.id !== 'local'"></button>
               <button @click="removeNode(n)"
                       :disabled="removingNodeId === n.id || deletingNodeId === n.id"
                       class="shrink-0 rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-100 disabled:opacity-40"
                       x-text="removingNodeId === n.id ? 'Removing...' : 'Remove'"
                       x-show="n.kind === 'ssh'"></button>
+              <button @click="deleteNode(n)"
+                      :disabled="deletingNodeId === n.id || removingNodeId === n.id"
+                      class="shrink-0 rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 disabled:opacity-40"
+                      x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"></button>
             </div>
           </div>
         </template>

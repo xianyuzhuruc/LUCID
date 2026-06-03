@@ -781,8 +781,6 @@ def remove_node_config(node_id: str) -> dict:
     node = next((n for n in cfg.nodes if n.id == node_id), None)
     if node is None:
         return {"ok": False, "error": f"node not found: {node_id}", "node_id": node_id}
-    if node.kind == "local":
-        return {"ok": False, "error": "local node cannot be deleted", "node_id": node_id}
     # Kill any active SSH tunnel for this node
     with _tunnel_lock:
         proc = _tunnel_procs.get(node_id)

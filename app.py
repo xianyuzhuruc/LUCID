@@ -1177,6 +1177,9 @@ def api_node_local_enable() -> dict:
 
 @app.delete("/api/nodes/{node_id}")
 def api_node_delete(node_id: str) -> dict:
+    # For local node, stop the local agent process first
+    if node_id == "local":
+        _stop_local_agent()
     try:
         result = nodes.remove_node_config(node_id)
     except OSError as e:
