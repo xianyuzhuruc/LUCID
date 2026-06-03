@@ -1,5 +1,9 @@
 # LUCID - Your next LLM-Unified Coding & Intelligent Development Platform
 
+<div align="center">
+  <a href="README.md">English</a> | <a href="README.zh-CN.md">中文</a>
+</div>
+
 LUCID is a web dashboard for monitoring and operating Claude Code,
 Codex, and managed shell sessions across one or more machines.
 
@@ -8,7 +12,7 @@ same time and need one place to see what is busy, waiting, idle, or ready for
 attention. A local hub serves the browser UI, while optional remote agents run
 on servers and report local session state back through SSH tunnels.
 
-[中文 README](README.zh-CN.md)
+
 
 ## What It Does
 
