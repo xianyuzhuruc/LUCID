@@ -41,6 +41,7 @@ else
 
     if ! python -c "import fastapi, importlib.metadata as metadata; metadata.version('LUCID')" 2>/dev/null; then
         echo "[LUCID] installing deps..."
+        pip install -q --upgrade pip
         pip install -q -e .
     fi
 fi

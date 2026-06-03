@@ -97,6 +97,12 @@ if not exist "%VENV_PYTHON%" (
 "%VENV_PYTHON%" -c "import fastapi, importlib.metadata as metadata; metadata.version('LUCID')" >nul 2>nul
 if errorlevel 1 (
     echo [LUCID] installing hub dependencies...
+    "%VENV_PYTHON%" -m pip install -q --upgrade pip
+    if errorlevel 1 (
+        echo [LUCID] Failed to upgrade pip.
+        pause
+        exit /b 1
+    )
     "%VENV_PYTHON%" -m pip install -q -e .
     if errorlevel 1 (
         echo [LUCID] Failed to install Python dependencies into .venv.
