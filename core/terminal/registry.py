@@ -46,6 +46,8 @@ def _conn() -> sqlite3.Connection:
         conn.execute("ALTER TABLE managed_process ADD COLUMN session_file_path TEXT")
     if "display_name" not in columns:
         conn.execute("ALTER TABLE managed_process ADD COLUMN display_name TEXT")
+    if "completed" not in columns:
+        conn.execute("ALTER TABLE managed_process ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
     return conn
 
 
@@ -175,7 +177,7 @@ def managed_windows(node_id: str, node_name: str) -> list[dict]:
         rows = conn.execute("""
             SELECT id, platform, pid, cwd, tty, argv, tmux_session, started_at_ms,
                    updated_at_ms, exited_at_ms, exit_code, session_id, transcript_path, session_file_path, status,
-                   display_name
+                   display_name, completed
             FROM managed_process
             ORDER BY updated_at_ms DESC
         """).fetchall()
@@ -183,7 +185,7 @@ def managed_windows(node_id: str, node_name: str) -> list[dict]:
     windows: list[dict] = []
     for row in rows:
         (proc_id, platform, pid, cwd, tty, argv, tmux_session, started_at,
-         updated_at, exited_at, exit_code, session_id, transcript_path, session_file_path, status, display_name) = row
+         updated_at, exited_at, exit_code, session_id, transcript_path, session_file_path, status, display_name, completed) = row
         alive = _pid_alive(int(pid)) if not exited_at else False
         session_data = claude_state.load_session(session_file_path) if platform == "claude" else {}
         if platform == "claude" and session_data:
@@ -197,7 +199,19 @@ def managed_windows(node_id: str, node_name: str) -> list[dict]:
             terminal_state, terminal_updated_at = _terminal_activity_state(tmux_session, platform, effective_updated_at) if alive else ({}, effective_updated_at)
         effective_updated_at = max(effective_updated_at, terminal_updated_at)
         idle_seconds = max(0, int(time.time() - effective_updated_at / 1000))
-        triage = _managed_triage(platform, alive, exit_code, transcript_path, tmux_session, idle_seconds, terminal_state)
+        if completed:
+            triage = {
+                "status": "completed",
+                "waiting_for": None,
+                "permission_msg": None,
+                "permission_ts": None,
+                "triage": "completed",
+                "reason": "Completed",
+                "suggestion": "",
+                "activity_label": "Completed",
+            }
+        else:
+            triage = _managed_triage(platform, alive, exit_code, transcript_path, tmux_session, idle_seconds, terminal_state)
         actions = ["focus", "close", "rename", "resume", "fork", "terminal"]
         if platform == "claude":
             actions.append("review")
@@ -249,7 +263,7 @@ def find_managed_window(platform: str, pid: int) -> Optional[dict]:
         row = conn.execute("""
             SELECT id, platform, pid, cwd, tty, argv, tmux_session, started_at_ms,
                    updated_at_ms, exited_at_ms, exit_code, session_id, transcript_path, session_file_path,
-                   status, display_name
+                   status, display_name, completed
             FROM managed_process
             WHERE platform = ? AND pid = ?
         """, (platform, pid)).fetchone()
@@ -257,7 +271,7 @@ def find_managed_window(platform: str, pid: int) -> Optional[dict]:
         return None
     (proc_id, stored_platform, stored_pid, cwd, tty, argv, tmux_session, started_at,
      updated_at, exited_at, exit_code, session_id, transcript_path, session_file_path,
-     status, display_name) = row
+     status, display_name, completed) = row
     session_data = claude_state.load_session(session_file_path) if stored_platform == "claude" else {}
     if stored_platform == "claude" and session_data:
         session_id = session_data.get("sessionId") or session_id
@@ -281,6 +295,7 @@ def find_managed_window(platform: str, pid: int) -> Optional[dict]:
         "session_file_path": session_file_path or "",
         "status": status,
         "display_name": display_name or "",
+        "completed": bool(completed),
         "name": display_name or ("Bash" if stored_platform == "bash" else f"{stored_platform}-{proc_id[:8]}"),
         "project_name": Path(cwd).name or cwd,
         "alive": alive,
@@ -341,6 +356,36 @@ def rename_managed(platform: str, pid: int, display_name: str) -> dict:
             (clean_name, row[0]),
         )
     return {"ok": True, "pid": pid, "platform": platform, "name": clean_name, "display_name": clean_name}
+
+
+def set_completed(platform: str, pid: int) -> dict:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM managed_process WHERE platform = ? AND pid = ?",
+            (platform, pid),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": f"managed process not found platform={platform} pid={pid}"}
+        conn.execute(
+            "UPDATE managed_process SET completed = 1 WHERE id = ?",
+            (row[0],),
+        )
+    return {"ok": True, "pid": pid, "platform": platform, "completed": True}
+
+
+def unset_completed(platform: str, pid: int) -> dict:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM managed_process WHERE platform = ? AND pid = ?",
+            (platform, pid),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": f"managed process not found platform={platform} pid={pid}"}
+        conn.execute(
+            "UPDATE managed_process SET completed = 0 WHERE id = ?",
+            (row[0],),
+        )
+    return {"ok": True, "pid": pid, "platform": platform, "completed": False}
 
 
 def attach_command(platform: str, pid: int) -> Optional[str]:

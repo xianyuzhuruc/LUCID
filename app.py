@@ -1545,6 +1545,52 @@ def api_node_rename(node_id: str, platform: str, pid: int, payload: dict = Body(
     return data
 
 
+def _local_window_complete(platform: str, pid: int) -> dict:
+    return registry.set_completed(platform, pid)
+
+
+def _local_window_uncomplete(platform: str, pid: int) -> dict:
+    return registry.unset_completed(platform, pid)
+
+
+@app.post("/api/nodes/{node_id}/windows/{platform}/{pid}/complete")
+def api_node_complete(node_id: str, platform: str, pid: int) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        data = _local_window_complete(platform, pid)
+    else:
+        data = nodes.forward(node_id, "POST", f"/agent/v1/windows/{platform}/{pid}/complete")
+    if data.get("ok"):
+        nodes.invalidate_snapshot_cache(node_id)
+        _refresh_snapshot_cache()
+    return data
+
+
+@app.post("/api/nodes/{node_id}/windows/{platform}/{pid}/uncomplete")
+def api_node_uncomplete(node_id: str, platform: str, pid: int) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        data = _local_window_uncomplete(platform, pid)
+    else:
+        data = nodes.forward(node_id, "POST", f"/agent/v1/windows/{platform}/{pid}/uncomplete")
+    if data.get("ok"):
+        nodes.invalidate_snapshot_cache(node_id)
+        _refresh_snapshot_cache()
+    return data
+
+
+@app.post("/agent/v1/windows/{platform}/{pid}/complete")
+def agent_window_complete(platform: str, pid: int, authorization: str | None = Header(None)) -> dict:
+    _check_agent_token(authorization)
+    return _local_window_complete(platform, pid)
+
+
+@app.post("/agent/v1/windows/{platform}/{pid}/uncomplete")
+def agent_window_uncomplete(platform: str, pid: int, authorization: str | None = Header(None)) -> dict:
+    _check_agent_token(authorization)
+    return _local_window_uncomplete(platform, pid)
+
+
 @app.post("/api/nodes/{node_id}/windows/{platform}/{pid}/close")
 def api_node_close(node_id: str, platform: str, pid: int) -> dict:
     node = _configured_node(node_id)

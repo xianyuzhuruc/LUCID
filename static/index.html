@@ -17,6 +17,7 @@
   .triage-waiting { background-color: #ef4444; animation: pulse-red 1.2s ease-in-out infinite; }
   .triage-stalled { background-color: #f59e0b; }
   .triage-bash { background-color: #64748b; }
+  .triage-completed { background-color: #3b82f6; }
   pre { white-space: pre-wrap; word-break: break-all; }
   .terminal-frame { min-height: 30rem; height: 100%; background: #020617; }
   .terminal-frame .xterm { height: 100%; padding: 10px; }
@@ -63,6 +64,10 @@
             :class="statusFilter==='stalled' ? 'ring-2 ring-gray-400' : ''"
             @click="statusFilter = (statusFilter==='stalled' ? '' : 'stalled')"
             x-text="counts.idle + ' Stalled'"></span>
+      <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full cursor-pointer hover:bg-blue-200"
+            :class="statusFilter==='completed' ? 'ring-2 ring-blue-400' : ''"
+            @click="statusFilter = (statusFilter==='completed' ? '' : 'completed')"
+            x-show="counts.completed > 0" x-text="counts.completed + ' Completed'"></span>
     </div>
     <button @click="showNodes = !showNodes; if(showNodes) refreshNodes()"
             class="text-xs border px-2 py-1 rounded hover:bg-slate-50 transition"
@@ -86,6 +91,7 @@
       <option value="working">Working</option>
       <option value="waiting">Waiting</option>
       <option value="stalled">Stalled</option>
+      <option value="completed">Completed</option>
     </select>
     <select x-model="nodeFilter" class="border rounded-lg px-2 py-1.5 text-sm bg-white">
       <option value="">All nodes</option>
@@ -195,7 +201,7 @@
         <div class="max-h-64 overflow-y-auto space-y-2" x-show="nodes.length > 0">
         <template x-for="n in nodes" :key="n.id">
           <div class="border rounded p-2 text-xs cursor-pointer hover:border-blue-300 hover:shadow-sm transition"
-               :class="launchForm.node_id === n.id ? 'ring-2 ring-blue-400' : ''"
+               :class="launchForm.node_id === n.id ? 'ring-2 ring-inset ring-blue-400' : ''"
                @click="launchForm.node_id = n.id">
             <div class="flex items-center justify-between gap-2">
               <div class="min-w-0">
@@ -534,7 +540,12 @@
                 class="text-xs border border-red-300 text-red-700 px-2 py-1 rounded hover:bg-red-50">Terminate</button>
         <button @click="sendTerminalKey('C-c')"
                 class="text-xs border border-red-200 text-red-600 px-2 py-1 rounded hover:bg-red-50">Ctrl-C</button>
+        <button @click="completeTerminalWindow()"
+                x-show="terminalWindow?.triage !== 'completed'"
+                class="text-xs border border-blue-300 text-blue-600 px-2 py-1 rounded hover:bg-blue-50">Complete</button>
         <button @click="reconnectTerminal()"
+                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50"
+                x-text="terminalWindow?.triage === 'completed' ? 'Start' : 'Reconnect'"></button>
                 class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Reconnect</button>
         <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
       </div>
@@ -945,7 +956,7 @@
 function superCliTerminal() {
   return {
     windows: [],
-    counts: { total: 0, busy: 0, waiting: 0, idle: 0 },
+    counts: { total: 0, busy: 0, waiting: 0, idle: 0, bash: 0, completed: 0 },
     statusFilter: '',
     nodeFilter: '',
     searchQuery: '',
@@ -1067,7 +1078,7 @@ function superCliTerminal() {
     launchNewDirError: '',
 
     get attentionWindows() {
-      return this.windows.filter(w => !this.isBashWindow(w) && this.attentionState(w) !== 'working');
+      return this.windows.filter(w => !this.isBashWindow(w) && this.attentionState(w) !== 'working' && w.triage !== 'completed');
     },
     get waitingWindows() {
       return this.attentionWindows;
@@ -1231,6 +1242,7 @@ function superCliTerminal() {
         waiting: 'Waiting',
         stalled: 'Stalled',
         bash: 'Bash',
+        completed: 'Completed',
       };
       return labels[state] || state || '';
     },
@@ -1703,8 +1715,46 @@ function superCliTerminal() {
       this.newDirError = '';
     },
 
+    async completeTerminalWindow() {
+      if (!this.terminalWindow) return;
+      const w = this.terminalWindow;
+      const r = await fetch(this.nodeWindowUrl(w, 'complete'), { method: 'POST' });
+      const d = await r.json();
+      if (d.ok) {
+        this.toast('Marked as completed: ' + (w.name || w.pid));
+        await this._refreshAfterComplete();
+      } else {
+        this.toast('Complete failed: ' + (d.error || ''));
+      }
+    },
+
+    async startTerminalWindow() {
+      if (!this.terminalWindow) return;
+      const w = this.terminalWindow;
+      const r = await fetch(this.nodeWindowUrl(w, 'uncomplete'), { method: 'POST' });
+      const d = await r.json();
+      if (d.ok) {
+        this.toast('Re-activated: ' + (w.name || w.pid));
+        await this._refreshAfterComplete();
+      } else {
+        this.toast('Start failed: ' + (d.error || ''));
+      }
+    },
+
+    async _refreshAfterComplete() {
+      const snap = await fetch('/api/windows').then(r => r.json());
+      this.applySnapshot(snap);
+      if (this.terminalWindow) {
+        const key = this.windowKey(this.terminalWindow);
+        this.terminalWindow = this.windows.find(item => this.windowKey(item) === key) || this.terminalWindow;
+      }
+    },
+
     async reconnectTerminal() {
       if (!this.terminalWindow) return;
+      if (this.terminalWindow.triage === 'completed') {
+        await this.startTerminalWindow();
+      }
       this.closeTerminalSession();
       this.$nextTick(() => this.startTerminalSession());
     },

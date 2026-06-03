@@ -7,4 +7,5 @@ TRIAGE_PRIORITY = {
     "stalled": 1,
     "working": 2,
     "bash": 3,
+    "completed": 4,
 }
