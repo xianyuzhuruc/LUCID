@@ -141,7 +141,19 @@
               <span x-show="n.local_port" x-text="'127.0.0.1:' + n.local_port"></span>
               <span x-show="!n.local_port && n.kind === 'agent' && n.agent_port" x-text="'127.0.0.1:' + n.agent_port"></span>
             </div>
-            <div class="mt-1 text-[11px] text-red-600 truncate" x-show="n.error" x-text="n.error"></div>
+            <div class="mt-2 flex items-center justify-between gap-2">
+              <div class="mt-0 text-[11px] text-red-600 truncate flex-1" x-show="n.error" x-text="n.error"></div>
+              <button @click="deleteNode(n)"
+                      :disabled="deletingNodeId === n.id || removingNodeId === n.id"
+                      class="shrink-0 rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 disabled:opacity-40"
+                      x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"
+                      x-show="n.id !== 'local'"></button>
+              <button @click="removeNode(n)"
+                      :disabled="removingNodeId === n.id || deletingNodeId === n.id"
+                      class="shrink-0 rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-100 disabled:opacity-40"
+                      x-text="removingNodeId === n.id ? 'Removing...' : 'Remove'"
+                      x-show="n.kind === 'ssh'"></button>
+            </div>
           </div>
         </template>
         <div x-show="syncJobs.length || syncSkipped.length"
@@ -999,6 +1011,8 @@ function superCliTerminal() {
       dirty: false,
       error: '',
     },
+    deletingNodeId: null,
+    removingNodeId: null,
     deploying: false,
     syncingNodes: false,
     syncJobs: [],
@@ -2305,6 +2319,54 @@ function superCliTerminal() {
         this.toast('Enable local failed: ' + String(e));
       } finally {
         this.enablingLocal = false;
+      }
+    },
+
+    async deleteNode(n) {
+      const label = n.name || n.id;
+      if (!confirm('Delete node "' + label + '"?\n\nThis removes the node config but leaves the remote agent intact.\nYou can re-add the node later without re-deploying.')) return;
+      this.deletingNodeId = n.id;
+      try {
+        const r = await fetch('/api/nodes/' + encodeURIComponent(n.id), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          this.toast('Delete failed: ' + (d.detail || d.error || ''));
+          return;
+        }
+        this.toast('Deleted node ' + (d.name || d.node_id));
+        if (this.launchForm.node_id === n.id) this.launchForm.node_id = '';
+        if (this.nodeFilter === n.id) this.nodeFilter = '';
+        await this.refreshNodes();
+      } catch (e) {
+        this.toast('Delete failed: ' + String(e));
+      } finally {
+        this.deletingNodeId = null;
+      }
+    },
+
+    async removeNode(n) {
+      const label = n.name || n.id;
+      if (!confirm('Remove node "' + label + '"?\n\nThis will:'
+          + '\n• Kill the remote agent process'
+          + '\n• Delete the remote ~/.lucid/agent directory'
+          + '\n• Remove the local node config'
+          + '\n\nThis CANNOT be undone. Use Delete if you only want to remove local config.')) return;
+      this.removingNodeId = n.id;
+      try {
+        const r = await fetch('/api/nodes/' + encodeURIComponent(n.id) + '/remove', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          this.toast('Remove failed: ' + (d.detail || d.error || ''));
+          return;
+        }
+        this.toast('Removed node ' + (d.name || d.node_id) + (d.remote_cleaned ? ' (remote cleaned)' : ''));
+        if (this.launchForm.node_id === n.id) this.launchForm.node_id = '';
+        if (this.nodeFilter === n.id) this.nodeFilter = '';
+        await this.refreshNodes();
+      } catch (e) {
+        this.toast('Remove failed: ' + String(e));
+      } finally {
+        this.removingNodeId = null;
       }
     },
 

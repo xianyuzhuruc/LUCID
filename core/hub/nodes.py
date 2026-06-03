@@ -773,6 +773,50 @@ def write_node_config(node: NodeConfig) -> None:
     load_config(force=True)
 
 
+def remove_node_config(node_id: str) -> dict:
+    """Delete a node from the config file and clean up its SSH tunnel."""
+    if not CONFIG_PATH.exists():
+        return {"ok": False, "error": f"no config file at {CONFIG_PATH}", "node_id": node_id}
+    cfg = load_config(force=True)
+    node = next((n for n in cfg.nodes if n.id == node_id), None)
+    if node is None:
+        return {"ok": False, "error": f"node not found: {node_id}", "node_id": node_id}
+    if node.kind == "local":
+        return {"ok": False, "error": "local node cannot be deleted", "node_id": node_id}
+    # Kill any active SSH tunnel for this node
+    with _tunnel_lock:
+        proc = _tunnel_procs.get(node_id)
+        if proc:
+            _terminate_tunnel(node_id, proc)
+    nodes_kept = [n for n in cfg.nodes if n.id != node_id]
+    lines = [
+        "[hub]",
+        f"poll_interval_ms = {cfg.poll_interval_ms}",
+        f"request_timeout_ms = {cfg.request_timeout_ms}",
+        f"stale_after_ms = {cfg.stale_after_ms}",
+        "",
+    ]
+    for n in nodes_kept:
+        lines.extend(_node_to_toml(n))
+        lines.append("")
+    CONFIG_PATH.write_text("\n".join(lines), encoding="utf-8")
+    CONFIG_PATH.chmod(0o600)
+    load_config(force=True)
+    invalidate_snapshot_cache(node_id)
+    _clear_ssh_history_for_node(node_id)
+    return {"ok": True, "node_id": node_id, "name": node.display_name, "kind": node.kind}
+
+
+def _clear_ssh_history_for_node(node_id: str) -> None:
+    rows = load_ssh_history()
+    filtered = [r for r in rows if r.get("id") != node_id]
+    if len(filtered) == len(rows):
+        return
+    SSH_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SSH_HISTORY_PATH.write_text(json.dumps(filtered, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    SSH_HISTORY_PATH.chmod(0o600)
+
+
 def _node_to_toml(node: NodeConfig) -> list[str]:
     fields = {
         "id": node.id,

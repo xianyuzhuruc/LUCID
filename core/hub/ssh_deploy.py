@@ -931,3 +931,60 @@ def _pick_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def cleanup_remote_node(node_id: str) -> dict:
+    """SSH to a remote node, kill the agent process, and remove the agent
+    directory. Returns a dict with ``ok`` and details."""
+    from core.hub.nodes import node_by_id
+
+    node = node_by_id(node_id)
+    if node is None:
+        return {"ok": False, "error": f"unknown node: {node_id}", "node_id": node_id}
+    if node.kind != "ssh":
+        return {"ok": False, "error": f"node {node_id} is not an SSH node (kind={node.kind})", "node_id": node_id}
+    target = node.ssh_host or f"{node.user}@{node.host}" if node.user and node.host else node.host
+    if not target:
+        return {"ok": False, "error": f"node {node_id} has no SSH host configured", "node_id": node_id}
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    identity_file = Path(node.identity_file).expanduser() if node.identity_file else DEFAULT_KEY
+    connect_kwargs: dict[str, object] = {
+        "hostname": node.host or node.ssh_host,
+        "port": node.ssh_port,
+        "username": node.user,
+        "timeout": 15,
+    }
+    if identity_file.exists():
+        connect_kwargs["key_filename"] = str(identity_file)
+    connect_kwargs["look_for_keys"] = True
+    connect_kwargs["allow_agent"] = True
+
+    remote_dir = "~/.lucid/agent"
+    try:
+        client.connect(**connect_kwargs)
+        remote_dir = _remote_expand(client, node.remote_dir or "~/.lucid/agent")
+        # 1) Stop the agent process
+        _stop_remote_agent(client, node_id, remote_dir)
+        # 2) Kill any remaining processes in the remote dir cwd
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", node_id)
+        _run(client, (
+            "set +e\n"
+            f'rm -f "$HOME/.lucid/agent-{safe_id}.pid"\n'
+            f'rm -f "$HOME/.lucid/logs/agent-{safe_id}.log"\n'
+            f'rm -rf {shlex.quote(remote_dir)}\n'
+            'echo "done"\n'
+        ), check=False, timeout=30)
+    except Exception as e:
+        try:
+            client.close()
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e), "node_id": node_id, "remote_dir": remote_dir}
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    return {"ok": True, "node_id": node_id, "host": node.host or node.ssh_host, "remote_dir": remote_dir}

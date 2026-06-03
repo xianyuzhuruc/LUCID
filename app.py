@@ -1178,6 +1178,42 @@ def api_node_local_enable() -> dict:
     }
 
 
+@app.delete("/api/nodes/{node_id}")
+def api_node_delete(node_id: str) -> dict:
+    try:
+        result = nodes.remove_node_config(node_id)
+    except OSError as e:
+        raise HTTPException(500, f"failed to delete node {node_id}: {e}") from e
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "delete failed"))
+    return result
+
+
+@app.post("/api/nodes/{node_id}/remove")
+def api_node_remove(node_id: str) -> dict:
+    """Remove a node: kill remote agent, clear remote dir, then delete local config."""
+    node = nodes.node_by_id(node_id)
+    if not node:
+        raise HTTPException(404, f"unknown node {node_id}")
+    # 1) Remote cleanup via SSH (kill agent + rm -rf agent dir)
+    remote_ok = False
+    if node.kind == "ssh":
+        cleanup_result = ssh_deploy.cleanup_remote_node(node_id)
+        remote_ok = cleanup_result.get("ok", False)
+        if not remote_ok:
+            msg = cleanup_result.get("error", "unknown")
+            raise HTTPException(502, f"remote cleanup failed: {msg}")
+    # 2) Remove local config (also kills any active SSH tunnel)
+    try:
+        result = nodes.remove_node_config(node_id)
+    except OSError as e:
+        raise HTTPException(500, f"failed to remove node config: {e}") from e
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "remove config failed"))
+    result["remote_cleaned"] = remote_ok
+    return result
+
+
 @app.get("/api/nodes/{node_id}/paths")
 def api_node_paths(node_id: str, path: str = "") -> dict:
     node = _configured_node(node_id)
