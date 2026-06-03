@@ -10,7 +10,7 @@ from . import runtime
 from core.common.text_encoding import subprocess_text_kwargs
 
 
-CAPTURE_TAIL_LINES = 15
+CAPTURE_TAIL_LINES = 30
 CAPTURE_INTERVAL_MS = 3000
 
 _ANSI_RE = re.compile(
