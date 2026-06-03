@@ -121,65 +121,6 @@
       </div>
     </div>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div class="lg:col-span-1 space-y-2">
-        <div x-show="nodes.length === 0" class="border border-dashed rounded p-4 text-xs text-gray-400">
-          No nodes configured
-        </div>
-        <template x-for="n in nodes" :key="n.id">
-          <div class="border rounded p-3 text-xs">
-            <div class="flex items-center justify-between gap-2">
-              <div class="min-w-0">
-                <div class="font-semibold truncate" x-text="n.name || n.id"></div>
-                <div class="text-gray-500 truncate" x-text="nodeSubtitle(n)"></div>
-              </div>
-              <span class="px-2 py-0.5 rounded-full shrink-0"
-                    :class="n.health === 'healthy' ? 'bg-emerald-100 text-emerald-700' : n.health === 'stale' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
-                    x-text="n.health"></span>
-            </div>
-            <div class="mt-2 flex gap-3 text-gray-400">
-              <span x-text="(n.window_count || 0) + ' windows'"></span>
-              <span x-show="n.local_port" x-text="'127.0.0.1:' + n.local_port"></span>
-              <span x-show="!n.local_port && n.kind === 'agent' && n.agent_port" x-text="'127.0.0.1:' + n.agent_port"></span>
-            </div>
-            <div class="mt-2 flex items-center justify-between gap-2">
-              <div class="mt-0 text-[11px] text-red-600 truncate flex-1" x-show="n.error" x-text="n.error"></div>
-              <button @click="removeNode(n)"
-                      :disabled="removingNodeId === n.id || deletingNodeId === n.id"
-                      class="shrink-0 rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-100 disabled:opacity-40"
-                      x-text="removingNodeId === n.id ? 'Removing...' : 'Remove'"
-                      x-show="n.kind === 'ssh'"></button>
-              <button @click="deleteNode(n)"
-                      :disabled="deletingNodeId === n.id || removingNodeId === n.id"
-                      class="shrink-0 rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 disabled:opacity-40"
-                      x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"></button>
-            </div>
-          </div>
-        </template>
-        <div x-show="syncJobs.length || syncSkipped.length"
-             x-transition
-             class="border rounded p-3 text-xs">
-          <div class="flex items-center justify-between gap-2">
-            <span class="font-semibold text-gray-700">Node sync</span>
-            <span class="text-[11px] text-gray-500" x-text="syncSummary()"></span>
-          </div>
-          <div class="mt-2 space-y-1">
-            <template x-for="job in syncJobs" :key="job.job_id">
-              <div class="flex items-center gap-2">
-                <span class="min-w-0 flex-1 truncate" x-text="job.node_name || job.node_id || job.job_id"></span>
-                <span class="rounded px-1.5 py-0.5 text-[10px]"
-                      :class="job.status === 'failed' ? 'bg-red-100 text-red-700' : job.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'"
-                      x-text="job.status"></span>
-              </div>
-            </template>
-            <template x-for="row in syncSkipped" :key="row.id + ':' + row.reason">
-              <div class="flex items-center gap-2 text-gray-400">
-                <span class="min-w-0 flex-1 truncate" x-text="row.id || 'unknown'"></span>
-                <span class="shrink-0" x-text="row.reason"></span>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
       <div class="lg:col-span-1 border rounded p-3">
         <h3 class="text-xs font-semibold mb-2">SSH deploy</h3>
         <div x-show="sshHistory.length" class="mb-2 space-y-1">
@@ -242,6 +183,67 @@
               <div class="flex gap-2">
                 <span class="w-24 shrink-0 font-mono text-slate-400" x-text="event.step"></span>
                 <span class="min-w-0 flex-1" x-text="event.message"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="lg:col-span-1 space-y-2">
+        <div x-show="nodes.length === 0" class="border border-dashed rounded p-4 text-xs text-gray-400">
+          No nodes configured
+        </div>
+        <template x-for="n in nodes" :key="n.id">
+          <div class="border rounded p-3 text-xs cursor-pointer hover:border-blue-300 hover:shadow-sm transition"
+               :class="launchForm.node_id === n.id ? 'ring-2 ring-blue-400' : ''"
+               @click="launchForm.node_id = n.id">
+            <div class="flex items-center justify-between gap-2">
+              <div class="min-w-0">
+                <div class="font-semibold truncate" x-text="n.name || n.id"></div>
+                <div class="text-gray-500 truncate" x-text="nodeSubtitle(n)"></div>
+              </div>
+              <span class="px-2 py-0.5 rounded-full shrink-0"
+                    :class="n.health === 'healthy' ? 'bg-emerald-100 text-emerald-700' : n.health === 'stale' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
+                    x-text="n.health"></span>
+            </div>
+            <div class="mt-2 flex gap-3 text-gray-400">
+              <span x-text="(n.window_count || 0) + ' windows'"></span>
+              <span x-show="n.local_port" x-text="'127.0.0.1:' + n.local_port"></span>
+              <span x-show="!n.local_port && n.kind === 'agent' && n.agent_port" x-text="'127.0.0.1:' + n.agent_port"></span>
+            </div>
+            <div class="mt-2 flex items-center justify-between gap-2">
+              <div class="mt-0 text-[11px] text-red-600 truncate flex-1" x-show="n.error" x-text="n.error"></div>
+              <button @click="removeNode(n)"
+                      :disabled="removingNodeId === n.id || deletingNodeId === n.id"
+                      class="shrink-0 rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-100 disabled:opacity-40"
+                      x-text="removingNodeId === n.id ? 'Removing...' : 'Remove'"
+                      x-show="n.kind === 'ssh'"></button>
+              <button @click="deleteNode(n)"
+                      :disabled="deletingNodeId === n.id || removingNodeId === n.id"
+                      class="shrink-0 rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 disabled:opacity-40"
+                      x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"></button>
+            </div>
+          </div>
+        </template>
+        <div x-show="syncJobs.length || syncSkipped.length"
+             x-transition
+             class="border rounded p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold text-gray-700">Node sync</span>
+            <span class="text-[11px] text-gray-500" x-text="syncSummary()"></span>
+          </div>
+          <div class="mt-2 space-y-1">
+            <template x-for="job in syncJobs" :key="job.job_id">
+              <div class="flex items-center gap-2">
+                <span class="min-w-0 flex-1 truncate" x-text="job.node_name || job.node_id || job.job_id"></span>
+                <span class="rounded px-1.5 py-0.5 text-[10px]"
+                      :class="job.status === 'failed' ? 'bg-red-100 text-red-700' : job.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'"
+                      x-text="job.status"></span>
+              </div>
+            </template>
+            <template x-for="row in syncSkipped" :key="row.id + ':' + row.reason">
+              <div class="flex items-center gap-2 text-gray-400">
+                <span class="min-w-0 flex-1 truncate" x-text="row.id || 'unknown'"></span>
+                <span class="shrink-0" x-text="row.reason"></span>
               </div>
             </template>
           </div>
