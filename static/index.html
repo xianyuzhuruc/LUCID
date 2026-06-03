@@ -1,0 +1,2455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LUCID</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  [x-cloak] { display: none !important; }
+  @keyframes pulse-red { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .pulse-red { animation: pulse-red 1.2s ease-in-out infinite; }
+  .triage-working { background-color: #10b981; }
+  .triage-waiting { background-color: #ef4444; animation: pulse-red 1.2s ease-in-out infinite; }
+  .triage-stalled { background-color: #f59e0b; }
+  .triage-bash { background-color: #64748b; }
+  pre { white-space: pre-wrap; word-break: break-all; }
+  .terminal-frame { min-height: 30rem; height: 100%; background: #020617; }
+  .terminal-frame .xterm { height: 100%; padding: 10px; }
+  .terminal-frame .xterm-screen { height: 100%; }
+  .terminal-frame .xterm-viewport { background-color: #020617 !important; }
+  .toast-enter { animation: slideIn .3s ease-out; }
+  @keyframes slideIn { from{transform:translateY(1rem);opacity:0} to{transform:translateY(0);opacity:1} }
+</style>
+</head>
+
+<body class="bg-gray-50 text-gray-900 min-h-screen" x-data="superCliTerminal()" x-init="init()" x-cloak>
+
+<!-- ===== Top bar: windows that need attention ===== -->
+<div class="sticky top-0 z-50 bg-slate-900 text-white px-4 py-2 shadow-lg flex items-center gap-3 text-sm"
+     x-show="attentionWindows.length > 0" x-transition>
+  <span class="font-bold shrink-0">ATTENTION (<span x-text="attentionWindows.length"></span>)</span>
+  <div class="flex gap-2 overflow-x-auto">
+    <template x-for="w in attentionWindows" :key="windowKey(w)">
+      <button @click="openPrimaryWindow(w)"
+              class="rounded px-3 py-1 shrink-0 flex items-center gap-1 transition"
+              :class="attentionButtonClass(w)">
+        <span class="inline-block w-2 h-2 rounded-full bg-white pulse-red"></span>
+        <span x-text="attentionNodeLabel(w)"></span>
+        <span class="opacity-70 text-xs" x-text="attentionMessage(w)"></span>
+      </button>
+    </template>
+  </div>
+</div>
+
+<!-- ===== Header ===== -->
+<header class="px-6 py-3 border-b bg-white flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <h1 class="text-xl font-bold tracking-tight">LUCID</h1>
+    <div class="flex gap-1 text-xs">
+      <span class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full cursor-pointer hover:bg-emerald-200"
+            :class="statusFilter==='working' ? 'ring-2 ring-emerald-500' : ''"
+            @click="statusFilter = (statusFilter==='working' ? '' : 'working')"
+            x-text="counts.busy + ' Working'"></span>
+      <span class="bg-red-100 text-red-800 px-2 py-0.5 rounded-full cursor-pointer hover:bg-red-200"
+            :class="statusFilter==='waiting' ? 'ring-2 ring-red-500' : ''"
+            @click="statusFilter = (statusFilter==='waiting' ? '' : 'waiting')"
+            x-show="counts.waiting > 0" x-text="counts.waiting + ' Waiting'"></span>
+      <span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full cursor-pointer hover:bg-gray-200"
+            :class="statusFilter==='stalled' ? 'ring-2 ring-gray-400' : ''"
+            @click="statusFilter = (statusFilter==='stalled' ? '' : 'stalled')"
+            x-text="counts.idle + ' Stalled'"></span>
+    </div>
+    <button @click="showNodes = !showNodes; if(showNodes) refreshNodes()"
+            class="text-xs border px-2 py-1 rounded hover:bg-slate-50 transition"
+            :class="showNodes ? 'border-slate-400 text-slate-700 bg-slate-50' : 'border-gray-200 text-gray-600'">
+      Nodes</button>
+    <div class="hidden lg:flex items-center gap-1 text-[10px]" x-show="nodes.length">
+      <template x-for="n in nodes" :key="n.id">
+        <span class="px-1.5 py-0.5 rounded-full border"
+              :class="n.health === 'healthy' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : n.health === 'stale' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-red-200 bg-red-50 text-red-700'"
+              x-text="n.id + ':' + (n.window_count || 0)"></span>
+      </template>
+    </div>
+  </div>
+  <div class="flex items-center gap-2">
+    <input type="text" placeholder="Search..." x-model="searchQuery"
+           @keydown.enter="doSearch()"
+           class="border rounded-lg pl-3 pr-8 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-400">
+    <button @click="doSearch()" class="text-gray-400 hover:text-gray-700 text-sm">Search</button>
+    <select x-model="statusFilter" class="border rounded-lg px-2 py-1.5 text-sm bg-white">
+      <option value="">All</option>
+      <option value="working">Working</option>
+      <option value="waiting">Waiting</option>
+      <option value="stalled">Stalled</option>
+    </select>
+    <select x-model="nodeFilter" class="border rounded-lg px-2 py-1.5 text-sm bg-white">
+      <option value="">All nodes</option>
+      <template x-for="n in nodes" :key="n.id">
+        <option :value="n.id" x-text="n.name || n.id"></option>
+      </template>
+    </select>
+  </div>
+</header>
+
+<main class="px-6 py-4">
+
+  <!-- ===== Nodes panel ===== -->
+  <div x-show="showNodes" class="mb-4 bg-white rounded-xl shadow-sm border p-4" x-transition>
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <h2 class="font-semibold text-sm">Nodes (<span x-text="nodes.length"></span>)</h2>
+        <span x-show="!localEnabled" class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">remote-only</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="syncAllNodes()"
+                :disabled="syncingNodes || !nodes.some(n => n.kind === 'ssh')"
+                class="text-xs border border-blue-300 text-blue-700 px-3 py-1 rounded hover:bg-blue-50 disabled:opacity-50">
+          <span x-text="syncingNodes ? 'Syncing...' : 'Sync all nodes'"></span>
+        </button>
+        <button x-show="!localEnabled"
+                @click="enableLocalNode()"
+                :disabled="enablingLocal"
+                class="text-xs border border-amber-300 text-amber-700 px-3 py-1 rounded hover:bg-amber-50 disabled:opacity-50">
+          <span x-text="enablingLocal ? 'Installing...' : 'Enable local'"></span>
+        </button>
+        <button @click="showNodes = false" class="text-gray-400 hover:text-gray-700">&times;</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="lg:col-span-1 space-y-2">
+        <div x-show="nodes.length === 0" class="border border-dashed rounded p-4 text-xs text-gray-400">
+          No nodes configured
+        </div>
+        <template x-for="n in nodes" :key="n.id">
+          <div class="border rounded p-3 text-xs">
+            <div class="flex items-center justify-between gap-2">
+              <div class="min-w-0">
+                <div class="font-semibold truncate" x-text="n.name || n.id"></div>
+                <div class="text-gray-500 truncate" x-text="nodeSubtitle(n)"></div>
+              </div>
+              <span class="px-2 py-0.5 rounded-full shrink-0"
+                    :class="n.health === 'healthy' ? 'bg-emerald-100 text-emerald-700' : n.health === 'stale' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
+                    x-text="n.health"></span>
+            </div>
+            <div class="mt-2 flex gap-3 text-gray-400">
+              <span x-text="(n.window_count || 0) + ' windows'"></span>
+              <span x-show="n.local_port" x-text="'127.0.0.1:' + n.local_port"></span>
+              <span x-show="!n.local_port && n.kind === 'agent' && n.agent_port" x-text="'127.0.0.1:' + n.agent_port"></span>
+            </div>
+            <div class="mt-1 text-[11px] text-red-600 truncate" x-show="n.error" x-text="n.error"></div>
+          </div>
+        </template>
+        <div x-show="syncJobs.length || syncSkipped.length"
+             x-transition
+             class="border rounded p-3 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold text-gray-700">Node sync</span>
+            <span class="text-[11px] text-gray-500" x-text="syncSummary()"></span>
+          </div>
+          <div class="mt-2 space-y-1">
+            <template x-for="job in syncJobs" :key="job.job_id">
+              <div class="flex items-center gap-2">
+                <span class="min-w-0 flex-1 truncate" x-text="job.node_name || job.node_id || job.job_id"></span>
+                <span class="rounded px-1.5 py-0.5 text-[10px]"
+                      :class="job.status === 'failed' ? 'bg-red-100 text-red-700' : job.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'"
+                      x-text="job.status"></span>
+              </div>
+            </template>
+            <template x-for="row in syncSkipped" :key="row.id + ':' + row.reason">
+              <div class="flex items-center gap-2 text-gray-400">
+                <span class="min-w-0 flex-1 truncate" x-text="row.id || 'unknown'"></span>
+                <span class="shrink-0" x-text="row.reason"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="lg:col-span-1 border rounded p-3">
+        <h3 class="text-xs font-semibold mb-2">SSH deploy</h3>
+        <div x-show="sshHistory.length" class="mb-2 space-y-1">
+          <div class="flex items-center justify-between text-[11px] text-gray-500">
+            <span>Recent SSH</span>
+            <span x-text="sshHistory.length + ' saved'"></span>
+          </div>
+          <div class="max-h-24 overflow-y-auto space-y-1">
+            <template x-for="h in sshHistory" :key="h.id + ':' + h.host + ':' + h.user + ':' + h.ssh_port">
+              <button type="button"
+                      @click="applySshHistory(h)"
+                      class="w-full rounded border border-gray-200 px-2 py-1 text-left hover:bg-slate-50">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="min-w-0 truncate font-medium text-gray-700" x-text="h.node_name || h.id"></span>
+                  <span class="flex shrink-0 items-center gap-1">
+                    <span x-show="h.password" class="rounded bg-emerald-50 px-1 text-[10px] text-emerald-700">pwd</span>
+                    <span class="text-[10px] text-gray-400" x-text="h.id"></span>
+                  </span>
+                </div>
+                <div class="truncate text-[11px] text-gray-500"
+                     x-text="(h.user ? h.user + '@' : '') + h.host + ':' + (h.ssh_port || 22)"></div>
+              </button>
+            </template>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <input class="border rounded px-2 py-1" placeholder="node id" x-model="deployForm.id">
+          <input class="border rounded px-2 py-1" placeholder="node name" x-model="deployForm.node_name">
+          <input class="border rounded px-2 py-1 col-span-2" placeholder="host" x-model="deployForm.host">
+          <input class="border rounded px-2 py-1" placeholder="user" x-model="deployForm.user">
+          <input class="border rounded px-2 py-1" type="password" placeholder="password (optional)" x-model="deployForm.password">
+          <label class="col-span-2 flex items-center gap-2 text-[11px] text-gray-600">
+            <input class="h-3.5 w-3.5" type="checkbox" x-model="deployForm.remember_password">
+            <span>Remember password locally</span>
+          </label>
+          <input class="border rounded px-2 py-1" type="number" placeholder="ssh port" x-model.number="deployForm.ssh_port">
+          <input class="border rounded px-2 py-1" type="number" placeholder="agent port: auto" x-model.number="deployForm.agent_port">
+          <input class="border rounded px-2 py-1 col-span-2" placeholder="remote dir" x-model="deployForm.remote_dir">
+        </div>
+        <button @click="deployNode()"
+                class="mt-3 text-xs border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-50 disabled:opacity-50"
+                :disabled="deploying">
+          <span x-text="deploying ? 'Deploying...' : 'Deploy / update agent'"></span>
+        </button>
+        <div x-show="deployStatus.status"
+             x-transition
+             class="mt-3 rounded border border-slate-200 bg-slate-50 p-2 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="rounded-full px-2 py-0.5 font-semibold"
+                  :class="deployStatus.status === 'failed' ? 'bg-red-100 text-red-700' : deployStatus.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'"
+                  x-text="deployStatus.status"></span>
+            <span class="min-w-0 flex-1 truncate text-slate-700" x-text="deployStatus.message"></span>
+          </div>
+          <div class="mt-1 text-[11px] text-slate-500" x-show="deployStatus.next_action"
+               x-text="'Next: ' + deployStatus.next_action"></div>
+          <div class="mt-1 text-[11px] text-red-600" x-show="deployStatus.error" x-text="deployStatus.error"></div>
+          <div class="mt-2 max-h-24 overflow-y-auto border-t border-slate-200 pt-1 text-[11px] text-slate-500"
+               x-show="deployStatus.events && deployStatus.events.length">
+            <template x-for="(event, eventIndex) in deployStatus.events.slice(-6)" :key="event.ts + ':' + eventIndex">
+              <div class="flex gap-2">
+                <span class="w-24 shrink-0 font-mono text-slate-400" x-text="event.step"></span>
+                <span class="min-w-0 flex-1" x-text="event.message"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="lg:col-span-1 border rounded p-3">
+        <h3 class="text-xs font-semibold mb-2">Launch managed process</h3>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <select class="border rounded px-2 py-1" x-model="launchForm.node_id" @change="handleLaunchNodeChange()" :disabled="nodes.length === 0">
+            <option value="" x-show="nodes.length === 0">No nodes</option>
+            <template x-for="n in nodes" :key="n.id">
+              <option :value="n.id" x-text="n.name || n.id"></option>
+            </template>
+          </select>
+          <select class="border rounded px-2 py-1" x-model="launchForm.platform" @change="handleLaunchPlatformChange()">
+            <option value="codex">codex</option>
+            <option value="claude">claude</option>
+          </select>
+          <div class="col-span-2 flex gap-2">
+            <input class="border rounded px-2 py-1 flex-1 min-w-0" placeholder="working directory (blank = home)"
+                   x-model="launchForm.cwd" @keydown.enter.prevent="openPathBrowser()">
+            <button @click="togglePathBrowser()"
+                    class="border border-slate-300 text-slate-700 rounded px-2 py-1 hover:bg-slate-50"
+                    x-text="pathBrowser.open ? 'Hide' : 'Browse'"></button>
+          </div>
+          <input class="border rounded px-2 py-1 col-span-2"
+                 :placeholder="'terminal name (blank = ' + (selectedLaunchNodeName() || 'auto') + ')'"
+                 x-model="launchForm.name">
+          <input class="border rounded px-2 py-1 col-span-2" :placeholder="'command, e.g. ' + launchForm.platform" x-model="launchForm.command">
+          <div x-show="pathBrowser.open"
+               x-transition
+               class="col-span-2 overflow-hidden rounded border border-gray-200 bg-slate-50">
+            <div class="flex items-center gap-2 border-b border-gray-200 px-2 py-1">
+              <button @click="loadPath(pathBrowser.parent)"
+                      :disabled="!pathBrowser.parent || pathBrowser.loading"
+                      class="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Up</button>
+              <button @click="loadPath(pathBrowser.home)"
+                      :disabled="!pathBrowser.home || pathBrowser.loading"
+                      class="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Home</button>
+              <div class="min-w-0 flex-1 truncate font-mono text-[11px] text-gray-600"
+                   x-text="pathBrowser.path || 'Loading...'"></div>
+              <button @click="pathBrowser.open = false"
+                      class="text-gray-400 hover:text-gray-700">&times;</button>
+            </div>
+            <div class="max-h-56 overflow-y-auto bg-white">
+              <div x-show="pathBrowser.loading" class="px-3 py-4 text-xs text-gray-400">Loading path...</div>
+              <div x-show="pathBrowser.error && !pathBrowser.loading"
+                   class="px-3 py-3 text-xs text-red-600"
+                   x-text="pathBrowser.error"></div>
+              <div x-show="!pathBrowser.loading && !pathBrowser.error && pathBrowser.entries.length === 0"
+                   class="px-3 py-4 text-xs text-gray-400">No entries</div>
+              <template x-for="entry in pathBrowser.entries" :key="entry.path + ':' + entry.name">
+                <button @click="selectLaunchPath(entry)"
+                        :disabled="entry.kind !== 'directory' || !entry.readable"
+                        class="flex w-full items-center gap-2 border-b border-gray-100 px-3 py-2 text-left text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">
+                  <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
+                        :class="fileBadgeClass(entry)"
+                        x-text="fileBadgeLabel(entry)"></span>
+                  <span class="min-w-0 flex-1 truncate text-gray-800" x-text="entry.name"></span>
+                  <span class="shrink-0 text-[10px] text-gray-400" x-show="entry.error" x-text="entry.error"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button @click="launchManaged()"
+                  :disabled="!launchForm.node_id"
+                  class="text-xs border border-green-300 text-green-700 px-3 py-1 rounded hover:bg-green-50 disabled:opacity-50">
+            Launch in tmux
+          </button>
+          <button @click="launchNewBash()"
+                  :disabled="!launchForm.node_id"
+                  class="text-xs border border-orange-300 text-orange-700 px-3 py-1 rounded hover:bg-orange-50 disabled:opacity-50">
+            New bash
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Search results ===== -->
+  <div x-show="searchResults !== null" class="mb-4 bg-white rounded-xl shadow-sm border p-4" x-transition>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold text-sm">
+        "<span x-text="searchQuery" class="text-blue-600"></span>"
+        — <span x-text="(searchResults||[]).length"></span> hits
+      </h2>
+      <button @click="searchResults = null" class="text-gray-400 hover:text-gray-700">&times;</button>
+    </div>
+    <div class="divide-y max-h-96 overflow-y-auto">
+      <template x-for="hit in (searchResults||[])" :key="(hit.node_id || 'local') + ':' + hit.path + ':' + hit.line">
+        <div class="py-2 text-sm cursor-pointer hover:bg-gray-50"
+             @click="openTimelineForHit(hit)">
+          <div class="flex items-center gap-2 text-xs text-gray-500">
+            <span class="bg-gray-100 rounded px-1" x-text="hit.node_name || hit.node_id || 'local'"></span>
+            <span class="px-1 rounded text-white text-[10px]"
+                  :class="hit.platform==='codex' ? 'bg-green-500' : 'bg-blue-500'"
+                  x-text="hit.platform"></span>
+            <span x-text="hit.ts?.slice(0,19) || ''"></span>
+            <span class="bg-gray-100 rounded px-1" x-text="hit.project_slug?.slice(0,30)"></span>
+          </div>
+          <p class="mt-0.5 text-gray-700" x-text="hit.excerpt"></p>
+          <!-- Context trace -->
+          <div x-show="hit.context?.length" class="mt-1 ml-2 border-l-2 border-gray-200 pl-2 space-y-0.5">
+            <template x-for="ctx in (hit.context||[])" :key="ctx.line">
+              <div class="text-xs" :class="ctx.is_match ? 'font-medium text-gray-900 bg-yellow-50 -ml-2 pl-2 border-l-2 border-yellow-400' : 'text-gray-400'">
+                <span class="text-[10px] font-mono mr-1"
+                      :class="{'text-blue-500': ctx.type==='user', 'text-emerald-500': ctx.type==='assistant', 'text-amber-500': ctx.type?.startsWith('codex')}"
+                      x-text="ctx.type"></span>
+                <span x-text="ctx.text?.slice(0,120)"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ===== Window cards ===== -->
+  <div class="flex flex-wrap items-start gap-2">
+    <template x-for="w in filteredWindows" :key="windowKey(w)">
+      <div class="w-full bg-white rounded-lg shadow-sm border hover:shadow-md transition cursor-pointer relative"
+           :class="{ 'ring-2 ring-red-400': w.triage === 'waiting', 'ring-2 ring-blue-400': w.triage !== 'waiting' && (isTerminalWindow(w) || expandedPid === windowKey(w)), 'sm:w-72': !isWindowDetailsExpanded(w), 'sm:w-[30rem] lg:w-[34rem]': isWindowDetailsExpanded(w) }"
+           @click="openPrimaryWindow(w)">
+        <div class="flex items-center gap-2 px-3 py-2">
+          <div class="flex min-w-0 flex-1 items-center gap-2">
+            <span class="inline-block w-3 h-3 rounded-full shrink-0" :class="'triage-' + w.triage"></span>
+            <span class="min-w-0 flex-1 truncate text-sm font-semibold" x-text="w.name || w.first_input || w.project_name"></span>
+          </div>
+          <span class="text-[10px] px-1.5 rounded-full text-white shrink-0" :class="'triage-' + w.triage"
+                x-text="triageLabel(w)"></span>
+          <button @click.stop="toggleWindowDetails(w)"
+                  class="shrink-0 rounded border border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-50 transition">
+            <span x-text="isWindowDetailsExpanded(w) ? 'Collapse' : 'Expand'"></span></button>
+        </div>
+        <div class="border-t border-gray-100 px-3 pb-3 pt-2 text-xs space-y-2"
+             x-show="isWindowDetailsExpanded(w)" x-transition @click.stop>
+          <div x-show="renameWindowKey !== windowKey(w)" class="flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <div class="font-semibold text-gray-800 truncate" x-text="w.name || w.first_input || w.project_name"></div>
+              <div class="text-[11px] text-gray-400 truncate" x-text="w.cwd"></div>
+            </div>
+            <button x-show="canRenameWindow(w)"
+                    @click="startRenameWindow(w)"
+                    class="shrink-0 rounded border border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-50"
+                    title="Rename terminal">Edit</button>
+          </div>
+          <div x-show="renameWindowKey === windowKey(w)">
+            <div class="min-w-0">
+              <input class="w-full rounded border border-blue-300 px-2 py-1 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-200"
+                     x-model="renameWindowName"
+                     @keydown.enter.prevent="saveWindowName(w)"
+                     @keydown.escape.prevent="cancelRenameWindow()"
+                     :disabled="renamingWindowKey === windowKey(w)">
+              <div class="mt-1 flex gap-1">
+                <button @click="saveWindowName(w)"
+                        :disabled="renamingWindowKey === windowKey(w)"
+                        class="rounded border border-blue-200 px-1.5 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                        x-text="renamingWindowKey === windowKey(w) ? 'Saving...' : 'Save'"></button>
+                <button @click="cancelRenameWindow()"
+                        :disabled="renamingWindowKey === windowKey(w)"
+                        class="rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-1 text-[10px] mb-1">
+            <span class="bg-gray-100 text-gray-500 px-1.5 rounded" x-text="w.node_name || w.node_id || 'local'"></span>
+            <span class="px-1.5 rounded text-white"
+                  :class="platformBadgeClass(w.platform || 'claude')"
+                  x-text="w.platform || 'claude'"></span>
+            <span x-show="w.node_health && w.node_health !== 'healthy'"
+                  class="bg-amber-100 text-amber-700 px-1.5 rounded"
+                  x-text="w.node_health"></span>
+          </div>
+          <div class="text-gray-600 truncate" x-show="w.current_task" x-text="w.current_task"></div>
+          <div class="text-gray-500 italic" x-text="w.triage_reason"></div>
+          <!-- Review verdict -->
+          <div x-show="reviewVerdicts[windowKey(w)]"
+               class="bg-blue-50 border border-blue-200 rounded p-2 text-xs text-blue-800 max-h-32 overflow-y-auto whitespace-pre-wrap"
+               x-text="reviewVerdicts[windowKey(w)]"></div>
+          <!-- Background tasks -->
+          <div x-show="w.background_tasks?.length" class="space-y-0.5">
+            <template x-for="(bt, i) in (w.background_tasks||[])" :key="i">
+              <div class="text-[10px] text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 truncate">
+                <span class="font-medium" x-text="bt.type === 'monitor' ? 'Monitor' : 'Bash bg'"></span>:
+                <span x-text="bt.description || bt.command"></span>
+              </div>
+            </template>
+          </div>
+          <!-- Skill tags -->
+          <div class="flex gap-1 flex-wrap" x-show="w.skills_used?.length || w.memory_ops?.length">
+            <template x-for="sk in (w.skills_used||[])" :key="sk">
+              <span class="bg-purple-50 text-purple-600 text-[10px] px-1.5 rounded" x-text="sk"></span>
+            </template>
+            <template x-for="m in (w.memory_ops||[])" :key="m.name+m.operation">
+              <span class="text-[10px] px-1.5 rounded"
+                    :class="m.operation === 'read' ? 'bg-sky-50 text-sky-600' : 'bg-pink-50 text-pink-600'"
+                    x-text="(m.operation === 'read' ? '↓' : '↑') + m.name"></span>
+            </template>
+          </div>
+          <div class="text-gray-400">
+            <span x-text="formatIdle(w.idle_seconds)"></span> ·
+            pid <span x-text="w.pid"></span>
+          </div>
+          <div class="flex gap-2 flex-wrap pt-1">
+            <button x-show="!isBashWindow(w)"
+                  @click="toggleTimeline(w)"
+                  class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition">
+              Timeline</button>
+            <button x-show="w.tmux_session"
+                    @click="openTerminal(w)"
+                    class="text-xs border border-slate-300 text-slate-700 px-2 py-1 rounded hover:bg-slate-50 transition">
+              Terminal</button>
+            <button x-show="w.triage === 'stalled' && (w.platform || 'claude') === 'claude'"
+                    @click="reviewWindow(w)"
+                    class="text-xs border border-blue-200 text-blue-600 px-2 py-1 rounded hover:bg-blue-50 transition"
+                    :class="reviewStatuses[windowKey(w)]==='running' ? 'opacity-50 cursor-wait' : ''"
+                    :disabled="reviewStatuses[windowKey(w)]==='running'">
+              <span x-text="reviewStatuses[windowKey(w)]==='running' ? 'Reviewing...' : (reviewStatuses[windowKey(w)]==='done' ? 'See Review' : 'Review')"></span></button>
+            <button x-show="canCloseWindow(w)"
+                    @click="if(confirm(closeLabel(w) + ' ' + (w.name||w.project_name) + '?')) closeWindow(w)"
+                    class="text-xs border px-2 py-1 rounded transition"
+                    :class="w.alive === false ? 'border-gray-300 text-gray-500 hover:bg-gray-100' : 'border-red-200 text-red-600 hover:bg-red-50'">
+              <span x-text="closeLabel(w)"></span></button>
+            <button x-show="['claude', 'codex'].includes(w.platform || 'claude')"
+                    @click="forkWindow(w)"
+                    class="text-xs border border-green-200 text-green-600 px-2 py-1 rounded hover:bg-green-50 transition">
+              Fork</button>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- ===== Managed terminal panel ===== -->
+  <div x-ref="terminalPanel"
+       x-show="terminalWindow"
+       class="mt-6 scroll-mt-24 bg-white rounded-xl shadow border p-5" x-transition>
+    <div class="flex items-center justify-between mb-3">
+      <div class="min-w-0">
+        <h2 class="font-semibold text-sm truncate">
+          <span x-text="terminalWindow?.name || terminalWindow?.project_name || ''"></span>
+          <span class="text-xs text-gray-400 font-normal" x-text="' · ' + (terminalWindow?.node_name || terminalWindow?.node_id || 'local')"></span>
+        </h2>
+        <div class="text-xs text-gray-400 truncate" x-text="'tmux: ' + (terminalWindow?.tmux_session || '')"></div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="sendTerminalKey('Enter')"
+                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Enter</button>
+        <button @click="copyTerminalSelection()"
+                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Copy</button>
+        <button @click="pasteTerminalClipboard()"
+                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Paste</button>
+        <button @click="terminateTerminalWindow()"
+                class="text-xs border border-red-300 text-red-700 px-2 py-1 rounded hover:bg-red-50">Terminate</button>
+        <button @click="sendTerminalKey('C-c')"
+                class="text-xs border border-red-200 text-red-600 px-2 py-1 rounded hover:bg-red-50">Ctrl-C</button>
+        <button @click="reconnectTerminal()"
+                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Reconnect</button>
+        <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
+      </div>
+    </div>
+    <div class="mb-3 flex items-center gap-1 border-b border-gray-200">
+      <button @click="setTerminalTab('terminal')"
+              class="border-x border-t px-3 py-1.5 text-xs"
+              :class="terminalPanelTab === 'terminal' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white text-gray-500 border-gray-200 hover:bg-gray-50'">
+        Terminal</button>
+      <button @click="setTerminalTab('editor')"
+              class="border-x border-t px-3 py-1.5 text-xs"
+              :class="terminalPanelTab === 'editor' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white text-gray-500 border-gray-200 hover:bg-gray-50'">
+        Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
+      <span class="min-w-0 flex-1 truncate px-2 text-[11px] text-gray-400" x-text="terminalPanelTab === 'editor' ? (editor.path || 'No file selected') : ''"></span>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] gap-3 lg:h-[40rem]">
+      <aside class="flex min-h-[30rem] flex-col overflow-hidden rounded border border-gray-200 bg-slate-50 lg:h-full">
+        <div class="flex items-center gap-2 border-b border-gray-200 px-2 py-2">
+          <button @click="loadTerminalPath(terminalExplorer.parent)"
+                  :disabled="!terminalExplorer.parent || terminalExplorer.loading"
+                  class="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Up</button>
+          <button @click="loadTerminalPath(terminalExplorer.home)"
+                  :disabled="!terminalExplorer.home || terminalExplorer.loading"
+                  class="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Home</button>
+          <button @click="loadTerminalPath(terminalExplorer.path || terminalWindow?.cwd || '')"
+                  :disabled="terminalExplorer.loading"
+                  class="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Refresh</button>
+          <button @click="$refs.terminalUploadInput?.click()"
+                  :disabled="!terminalExplorer.path || terminalExplorer.loading || terminalExplorer.uploading"
+                  class="rounded border border-blue-200 bg-white px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 disabled:opacity-40"
+                  x-text="terminalExplorer.uploading ? 'Uploading...' : 'Upload'"></button>
+          <input x-ref="terminalUploadInput"
+                 type="file"
+                 class="hidden"
+                 @change="uploadTerminalFile($event)">
+        </div>
+        <div class="border-b border-gray-200 px-2 py-2">
+          <input class="w-full rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-slate-400 focus:outline-none"
+                 placeholder="Path"
+                 x-model="terminalExplorer.pathInput"
+                 @keydown.enter.prevent="jumpTerminalPath()">
+          <div x-show="terminalExplorer.uploadError"
+               class="mt-1 truncate text-[11px] text-red-600"
+               x-text="terminalExplorer.uploadError"></div>
+        </div>
+        <div class="h-96 overflow-y-auto bg-white lg:h-auto lg:flex-1">
+          <div x-show="terminalExplorer.loading" class="px-3 py-4 text-xs text-gray-400">Loading path...</div>
+          <div x-show="terminalExplorer.error && !terminalExplorer.loading"
+               class="px-3 py-3 text-xs text-red-600"
+               x-text="terminalExplorer.error"></div>
+          <div x-show="!terminalExplorer.loading && !terminalExplorer.error && terminalExplorer.entries.length === 0"
+               class="px-3 py-4 text-xs text-gray-400">No entries</div>
+          <template x-for="entry in terminalExplorer.entries" :key="entry.path + ':' + entry.name">
+            <button @click="selectTerminalPath(entry)"
+                    draggable="true"
+                    @dragstart="startTerminalPathDrag($event, entry)"
+                    :disabled="!entry.readable"
+                    class="group flex w-full items-center gap-2 border-b border-gray-100 px-3 py-2 text-left text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">
+              <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
+                    :class="fileBadgeClass(entry)"
+                    x-text="fileBadgeLabel(entry)"></span>
+              <span class="min-w-0 flex-1 truncate text-gray-800" x-text="entry.name"></span>
+              <span class="shrink-0 text-[10px] text-gray-400" x-show="entry.error" x-text="entry.error"></span>
+            </button>
+          </template>
+        </div>
+      </aside>
+      <div class="terminal-frame overflow-hidden rounded lg:h-full"
+           x-ref="terminalOutput"
+           x-show="terminalPanelTab === 'terminal'"
+           :class="terminalDropActive ? 'ring-2 ring-blue-300' : ''"
+           @dragover.prevent="handleTerminalDragOver($event)"
+           @dragleave="terminalDropActive = false"
+           @drop.prevent="dropTerminalPath($event)"></div>
+      <div x-show="terminalPanelTab === 'editor'"
+           class="flex min-h-[30rem] flex-col overflow-hidden rounded border border-gray-200 bg-white lg:h-full">
+        <div class="flex items-center gap-2 border-b border-gray-200 px-3 py-2 text-xs">
+          <span class="min-w-0 flex-1 truncate font-mono text-gray-600" x-text="editor.path || 'Select a file from the left sidebar'"></span>
+          <span x-show="editor.loading" class="text-gray-400">Loading...</span>
+          <span x-show="editor.saving" class="text-gray-400">Saving...</span>
+          <span x-show="editor.deleting" class="text-gray-400">Deleting...</span>
+          <span x-show="editor.dirty && !editor.saving && !editor.deleting" class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">modified</span>
+          <button @click="deleteEditorFile()"
+                  :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
+                  class="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-40"
+                  x-text="editor.deleting ? 'Deleting...' : 'Delete'"></button>
+          <button @click="saveEditorFile()"
+                  :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
+                  class="rounded border border-blue-200 px-2 py-1 text-blue-600 hover:bg-blue-50 disabled:opacity-40">Save</button>
+        </div>
+        <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
+        <textarea class="min-h-0 flex-1 resize-none border-0 p-3 font-mono text-xs leading-5 text-gray-800 outline-none"
+                  x-model="editor.content"
+                  @input="editor.dirty = true"
+                  @keydown="handleEditorKeydown($event)"
+                  :readonly="editor.loading || editor.saving || editor.deleting"
+                  placeholder="Select a readable text file from the left sidebar"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Timeline panel ===== -->
+  <div x-ref="timelinePanel"
+       x-show="(expandedPid !== null && timelineData) || (expandedHistoryId && timelineData)"
+       class="mt-6 bg-white rounded-xl shadow border p-5" x-transition>
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold flex items-center gap-2">
+        <span x-text="timelineData?.project_name || timelineData?.project_slug || ''"></span>
+        <span class="text-xs text-gray-400 font-normal" x-text="'session:' + (timelineData?.session_id || '').slice(0,8)"></span>
+        <span x-show="timelineData?.platform === 'codex'" class="text-[10px] bg-green-500 text-white px-1.5 rounded">codex</span>
+      </h2>
+      <div class="flex items-center gap-2">
+        <button @click="showPlanHistory = !showPlanHistory"
+                x-show="timelineData?.plan_history?.length"
+                class="text-xs border border-purple-200 text-purple-600 px-2 py-1 rounded hover:bg-purple-50 transition"
+                :class="showPlanHistory ? 'bg-purple-50' : ''">
+          Plan · <span x-text="timelineData?.plan_history?.length || 0"></span> 版本</button>
+        <button @click="expandedPid = null; expandedWindow = null; expandedHistoryId = null; timelineData = null; planData = null"
+                class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
+      </div>
+    </div>
+    <!-- Plan version history -->
+    <div x-show="showPlanHistory && timelineData?.plan_history?.length" class="mb-4 bg-purple-50 rounded-lg p-4 border border-purple-200 text-sm" x-transition>
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="font-semibold text-purple-800">Plan</span>
+          <button @click="showCurrentPlan()"
+                  class="text-xs border border-purple-400 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-100 font-medium"
+                  :class="planData ? 'bg-purple-100' : ''">
+            查看当前 plan
+          </button>
+          <span class="text-xs text-gray-500" x-text="'· ' + (timelineData?.plan_history?.length || 0) + ' 个历史版本'"></span>
+        </div>
+        <button @click="showPlanHistory = false" class="text-purple-400 hover:text-purple-700">&times;</button>
+      </div>
+      <!-- Current plan file (full, copyable) -->
+      <div x-show="planData" class="mb-3 bg-white border border-purple-300 rounded p-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="font-medium text-purple-900 text-xs" x-text="planData?.plan?.name || ''"></span>
+          <div class="flex gap-2">
+            <button @click="copyPlanContent()"
+                    class="text-xs border border-purple-300 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-100"
+                    x-text="copyButtonText">Copy</button>
+            <button @click="planData = null" class="text-purple-400 hover:text-purple-700">&times;</button>
+          </div>
+        </div>
+        <textarea readonly class="w-full text-xs text-purple-900 max-h-80 font-mono p-2 border rounded bg-purple-50/30"
+                  rows="12" x-ref="planTextarea"
+                  x-text="planData?.plan?.content || ''"></textarea>
+      </div>
+      <div class="space-y-2 max-h-[40vh] overflow-y-auto">
+        <template x-for="(ph, idx) in (timelineData?.plan_history||[]).slice().reverse()" :key="idx">
+          <div class="border border-purple-200 rounded bg-white">
+            <div class="px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-purple-25"
+                 @click="ph._expanded = !ph._expanded">
+              <div class="flex items-center gap-2">
+                <span class="font-mono text-purple-700 text-xs font-bold" x-text="ph.version_label"></span>
+                <span class="text-xs text-gray-500" x-text="ph.ts?.slice(0,19) || ''"></span>
+                <span class="text-[10px] px-1.5 rounded"
+                      :class="ph.operation==='write' ? 'bg-purple-200 text-purple-800' : 'bg-amber-100 text-amber-700'"
+                      x-text="ph.operation"></span>
+                <span class="text-xs text-gray-400" x-text="ph.plan_file"></span>
+              </div>
+              <span class="text-gray-400 text-xs" x-text="ph._expanded ? '▼' : '▶'"></span>
+            </div>
+            <div x-show="ph._expanded" class="px-3 pb-3 border-t border-purple-100" x-transition>
+              <template x-if="ph.operation === 'write' && ph.content">
+                <div class="mt-2">
+                  <button @click="copyText(ph.content)" class="text-xs border border-purple-300 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-100 mb-1">Copy</button>
+                  <textarea readonly class="w-full text-xs text-purple-900 max-h-60 font-mono p-2 border rounded bg-purple-50/30"
+                            rows="8" x-text="ph.content"></textarea>
+                </div>
+              </template>
+              <template x-if="ph.operation === 'edit' && ph.diff">
+                <div class="mt-2 text-xs font-mono space-y-1">
+                  <div class="bg-red-50 text-red-700 p-1 rounded whitespace-pre-wrap" x-text="'- ' + (ph.diff.old || '')"></div>
+                  <div class="bg-green-50 text-green-700 p-1 rounded whitespace-pre-wrap" x-text="'+ ' + (ph.diff.new || '')"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+    <!-- Skill/Memory summary (clickable: skill → scroll to event, memory → show content) -->
+    <div class="mb-3 flex flex-wrap gap-2 text-xs"
+         x-show="timelineData?.skills_used?.length || timelineData?.memory_ops?.length">
+      <template x-for="sk in (timelineData?.skills_used||[])" :key="'s'+sk">
+        <span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded cursor-pointer hover:bg-purple-200 transition"
+              @click="scrollToSkill(sk)">skill: <span x-text="sk"></span></span>
+      </template>
+      <template x-for="m in (timelineData?.memory_ops||[])" :key="'m'+m.name+m.operation">
+        <span class="px-2 py-0.5 rounded cursor-pointer hover:opacity-80 transition"
+              :class="m.operation === 'read' ? 'bg-sky-100 text-sky-700 hover:bg-sky-200' : 'bg-pink-100 text-pink-700 hover:bg-pink-200'"
+              @click="showMemoryDetail(m.name, m.operation, timelineData?.node_id)"
+              x-text="(m.operation === 'read' ? 'mem↓ ' : 'mem↑ ') + m.name"></span>
+      </template>
+    </div>
+    <!-- Memory detail popup -->
+    <div x-show="memoryDetail" class="mb-3 bg-white border rounded-lg shadow-lg p-4 text-sm" x-transition>
+      <div class="flex items-center justify-between mb-2">
+        <span class="font-semibold" x-text="memoryDetail?.name || ''"></span>
+        <div class="flex items-center gap-2">
+          <span class="text-xs px-2 py-0.5 rounded"
+                :class="memoryDetail?.viewOp === 'read' ? 'bg-sky-100 text-sky-600' : 'bg-pink-100 text-pink-600'"
+                x-text="memoryDetail?.viewOp === 'read' ? 'referenced' : 'modified'"></span>
+          <button @click="memoryDetail = null" class="text-gray-400 hover:text-gray-700">&times;</button>
+        </div>
+      </div>
+      <div class="text-xs text-gray-500 mb-2" x-text="memoryDetail?.description || ''"></div>
+      <div class="text-xs font-mono bg-gray-50 rounded p-2 mb-1">type: <span x-text="memoryDetail?.type || ''"></span></div>
+      <pre class="text-xs text-gray-700 max-h-48 overflow-y-auto whitespace-pre-wrap bg-gray-50 rounded p-2"
+           x-text="memoryDetail?.content || '(loading...)'"></pre>
+    </div>
+    <div class="space-y-2 max-h-[32rem] overflow-y-auto">
+      <template x-for="(ev, idx) in (timelineData?.events || [])" :key="idx">
+        <div :id="'tl-ev-'+idx" class="text-sm border-l-2 pl-3 py-1"
+             :class="{
+               'border-blue-400': ev.kind==='user_text',
+               'border-emerald-400': ev.kind==='assistant_text',
+               'border-amber-400': ev.kind==='tool_use',
+               'border-purple-500': ev.kind==='skill_invoke',
+               'border-sky-400 border-dashed': ev.kind==='memory_read',
+               'border-pink-500': ev.kind==='memory_write',
+               'border-gray-300': ev.kind==='tool_result'||ev.kind==='system'
+             }">
+          <div class="flex items-center gap-2 text-xs text-gray-400 mb-0.5">
+            <span x-text="ev.ts?.slice(11,19) || ''"></span>
+            <template x-if="ev.kind==='skill_invoke'">
+              <span class="text-purple-600 font-medium">skill: <span x-text="ev.tool"></span></span>
+            </template>
+            <template x-if="ev.kind==='memory_read'">
+              <span class="text-sky-600 font-medium">mem↓ <span x-text="ev.tool"></span></span>
+            </template>
+            <template x-if="ev.kind==='memory_write'">
+              <span class="text-pink-600 font-medium">mem↑ <span x-text="ev.tool"></span></span>
+            </template>
+            <template x-if="ev.kind!=='skill_invoke' && ev.kind!=='memory_read' && ev.kind!=='memory_write'">
+              <span :class="{'text-blue-600': ev.kind==='user_text', 'text-emerald-600': ev.kind==='assistant_text', 'text-amber-600': ev.kind==='tool_use', 'text-gray-500': true}"
+                    class="font-medium"
+                    x-text="ev.kind==='tool_use' ? ev.tool : ev.kind.replace('_text','').replace('tool_result','result')"></span>
+            </template>
+          </div>
+          <!-- Skill args -->
+          <template x-if="ev.kind === 'skill_invoke'">
+            <div class="text-xs text-purple-600 truncate" x-text="ev.extra?.args || ''"></div>
+          </template>
+          <!-- Memory operation detail -->
+          <template x-if="ev.kind === 'memory_read' || ev.kind === 'memory_write'">
+            <div class="text-xs text-gray-500" x-text="ev.extra?.operation + ': ' + (ev.extra?.path || '').split('/').pop()"></div>
+          </template>
+          <!-- Generic tool_use -->
+          <template x-if="ev.kind === 'tool_use'">
+            <div class="text-xs text-gray-600 font-mono">
+              <template x-for="(v, k) in (ev.extra || {})" :key="k">
+                <span class="mr-2"><span class="text-gray-400" x-text="k+'='"></span><span x-text="typeof v==='string' ? v.slice(0,120) : JSON.stringify(v)"></span></span>
+              </template>
+            </div>
+          </template>
+          <template x-if="ev.kind !== 'tool_use'">
+            <pre class="text-xs text-gray-700 max-h-32 overflow-y-auto" x-text="ev.text?.slice(0,2000) || ''"></pre>
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ===== History section ===== -->
+  <div class="mt-8 bg-white rounded-xl shadow-sm border">
+    <div class="px-5 py-3 border-b flex items-center justify-between">
+      <h2 class="font-semibold text-sm">History (<span x-text="historyTotal"></span>)</h2>
+      <div class="flex items-center gap-2">
+        <input type="text" placeholder="Search history..." x-model="historyQuery"
+               @keydown.enter="showHistory = true; loadHistory(1)"
+               class="border rounded px-2 py-1 text-xs w-48 focus:outline-none focus:ring-1 focus:ring-blue-400">
+        <button @click="showHistory = true; loadHistory(1)" class="text-xs text-blue-600 hover:underline">Go</button>
+        <button @click="historyQuery=''; showHistory = true; loadHistory(1)" class="text-xs text-gray-400 hover:text-gray-600" x-show="historyQuery">Clear</button>
+        <select x-model.number="historyLimit" @change="showHistory = true; loadHistory(1)" class="border rounded px-1 py-1 text-xs bg-white">
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="500">All</option>
+        </select>
+        <button @click="showHistory = !showHistory"
+                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50"
+                x-text="showHistory ? 'Hide' : 'Show'"></button>
+      </div>
+    </div>
+    <div class="divide-y max-h-[28rem] overflow-y-auto" x-show="showHistory && historySessions.length > 0">
+      <template x-for="s in historySessions" :key="s.session_key || s.session_id">
+        <div class="px-5 py-3 hover:bg-gray-50 cursor-pointer flex items-start gap-3 text-sm"
+             @click="openHistoryTimeline(s)">
+          <span class="mt-1 inline-block w-2 h-2 rounded-full shrink-0"
+                :class="s.is_alive ? 'bg-emerald-500' : 'bg-gray-300'"></span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <span class="bg-gray-100 text-gray-500 px-1 rounded text-[10px]" x-text="s.node_name || s.node_id || 'local'"></span>
+              <span class="px-1 rounded text-white text-[10px]"
+                    :class="s.platform==='codex' ? 'bg-green-500' : 'bg-blue-500'"
+                    x-text="s.platform || 'claude'"></span>
+              <span class="font-medium text-gray-800 truncate" x-text="s.first_input?.slice(0,80) || s.session_id.slice(0,8)"></span>
+            </div>
+            <div class="flex items-center gap-3 text-xs text-gray-400 mt-0.5 flex-wrap">
+              <span x-text="s.project_name"></span>
+              <span x-show="s.model" class="text-gray-400" x-text="s.model?.split('/').pop()?.split('-').slice(0,3).join('-')"></span>
+              <span x-text="s.first_ts?.slice(0,10) || ''"></span>
+              <span x-text="Math.round(s.transcript_size/1024) + ' KB'"></span>
+              <!-- Skill tags -->
+              <template x-for="sk in (s.skills_used||[]).slice(0,3)" :key="sk">
+                <span class="bg-blue-50 text-blue-600 rounded px-1" x-text="sk"></span>
+              </template>
+              <span x-show="(s.skills_used||[]).length > 3" class="text-gray-300" x-text="'+' + ((s.skills_used||[]).length - 3)"></span>
+              <template x-for="m in (s.memory_ops||[]).slice(0,3)" :key="m.name+m.operation">
+                <span class="rounded px-1" :class="m.operation==='read' ? 'bg-sky-50 text-sky-600' : 'bg-pink-50 text-pink-600'"
+                      x-text="(m.operation==='read'?'↓':'↑')+m.name"></span>
+              </template>
+            </div>
+            <!-- Match snippets (VS Code-style) -->
+            <div x-show="s.match_snippets?.length" class="mt-1 space-y-0.5">
+              <template x-for="(snip, si) in (s.match_snippets||[])" :key="si">
+                <div class="text-[11px] text-gray-500 bg-gray-50 rounded px-2 py-0.5 font-mono truncate"
+                     x-text="snip"></div>
+              </template>
+            </div>
+          </div>
+          <div class="flex gap-1 shrink-0" @click.stop>
+            <button x-show="s.is_alive" @click="resumeSession(s)"
+                    class="text-xs border border-gray-200 text-gray-500 px-2 py-0.5 rounded hover:bg-gray-100">
+              Focus</button>
+            <button x-show="!s.is_alive" @click="resumeSession(s)"
+                    class="text-xs border border-gray-200 text-gray-500 px-2 py-0.5 rounded hover:bg-gray-100">
+              Resume</button>
+            <button x-show="!s.is_alive" @click="forkHistorySession(s)"
+                    class="text-xs border border-green-200 text-green-600 px-2 py-0.5 rounded hover:bg-green-50">
+              Fork</button>
+          </div>
+        </div>
+      </template>
+    </div>
+    <div class="px-5 py-2 border-t flex items-center justify-between text-xs text-gray-500"
+         x-show="showHistory && historyTotal > historyLimit">
+      <span>Page <span x-text="historyPage"></span> / <span x-text="Math.ceil(historyTotal / historyLimit)"></span></span>
+      <div class="flex gap-2">
+        <button @click="loadHistory(historyPage - 1)" :disabled="historyPage <= 1"
+                class="px-2 py-1 border rounded disabled:opacity-30 hover:bg-gray-100">Prev</button>
+        <button @click="loadHistory(historyPage + 1)" :disabled="historyPage * historyLimit >= historyTotal"
+                class="px-2 py-1 border rounded disabled:opacity-30 hover:bg-gray-100">Next</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Toast -->
+<div class="fixed bottom-4 right-4 z-50 space-y-2">
+  <template x-for="t in toasts" :key="t.id">
+    <div class="toast-enter bg-gray-900 text-white text-sm rounded-lg px-4 py-2 shadow-lg max-w-sm"
+         x-text="t.message" x-show="true" x-transition
+         x-init="setTimeout(() => { toasts = toasts.filter(item => item.id !== t.id) }, t.duration)"></div>
+  </template>
+</div>
+
+<script>
+function superCliTerminal() {
+  return {
+    windows: [],
+    counts: { total: 0, busy: 0, waiting: 0, idle: 0 },
+    statusFilter: '',
+    nodeFilter: '',
+    searchQuery: '',
+    searchResults: null,
+    expandedPid: null,
+    expandedWindow: null,
+    expandedWindowDetails: {},
+    expandedHistoryId: null,
+    timelineData: null,
+    planData: null,
+    toasts: [],
+    nextToastId: 1,
+    evtSource: null,
+    historySessions: [],
+    historyTotal: 0,
+    historyPage: 1,
+    historyLimit: 20,
+    historyQuery: '',
+    showHistory: false,
+    reviewStatuses: {},
+    reviewVerdicts: {},
+    memoryDetail: null,
+    showPlanHistory: false,
+    copyButtonText: 'Copy',
+    renameWindowKey: null,
+    renameWindowName: '',
+    renamingWindowKey: null,
+    nodes: [],
+    sshHistory: [],
+    showNodes: false,
+    localEnabled: false,
+    enablingLocal: false,
+    terminalWindow: null,
+    terminal: null,
+    terminalFitAddon: null,
+    terminalSocket: null,
+    terminalResizeObserver: null,
+    terminalDataDisposable: null,
+    terminalCopyHandler: null,
+    terminalPasteHandler: null,
+    terminalWheelHandler: null,
+    terminalWheelRemainder: 0,
+    terminalLastPasteData: '',
+    terminalLastPasteAt: 0,
+    terminalDropActive: false,
+    terminalPanelTab: 'terminal',
+    terminalExplorer: {
+      loading: false,
+      uploading: false,
+      path: '',
+      pathInput: '',
+      parent: '',
+      home: '',
+      entries: [],
+      error: '',
+      uploadError: '',
+    },
+    editor: {
+      path: '',
+      content: '',
+      originalContent: '',
+      loading: false,
+      saving: false,
+      deleting: false,
+      dirty: false,
+      error: '',
+    },
+    deploying: false,
+    syncingNodes: false,
+    syncJobs: [],
+    syncSkipped: [],
+    deployStatus: {
+      job_id: '',
+      status: '',
+      step: '',
+      message: '',
+      next_action: '',
+      events: [],
+      error: '',
+    },
+    deployForm: {
+      id: '',
+      node_name: '',
+      host: '',
+      user: '',
+      password: '',
+      remember_password: true,
+      ssh_port: 22,
+      agent_port: '',
+      python_command: 'auto',
+      remote_dir: '~/.lucid/agent',
+    },
+    launchForm: {
+      node_id: '',
+      platform: 'codex',
+      name: '',
+      cwd: '',
+      command: 'codex',
+    },
+    pathBrowser: {
+      open: false,
+      loading: false,
+      path: '',
+      parent: '',
+      home: '',
+      entries: [],
+      error: '',
+    },
+
+    get attentionWindows() {
+      return this.windows.filter(w => !this.isBashWindow(w) && this.attentionState(w) !== 'working');
+    },
+    get waitingWindows() {
+      return this.attentionWindows;
+    },
+    get filteredWindows() {
+      return this.windows.filter(w => {
+        const statusOk = !this.statusFilter || w.triage === this.statusFilter;
+        const nodeOk = !this.nodeFilter || (w.node_id || 'local') === this.nodeFilter;
+        return statusOk && nodeOk;
+      });
+    },
+
+    attentionState(w) {
+      if (this.isBashWindow(w)) return 'working';
+      return w.triage || w.status || 'working';
+    },
+
+    attentionButtonClass(w) {
+      const state = this.attentionState(w);
+      if (state === 'waiting') return 'bg-red-700 hover:bg-red-800';
+      if (state === 'stalled') return 'bg-amber-600 hover:bg-amber-700';
+      return 'bg-gray-700 hover:bg-gray-800';
+    },
+
+    attentionNodeLabel(w) {
+      return w.node_name || w.node_id || 'local';
+    },
+
+    attentionMessage(w) {
+      return this.statusLabel(this.attentionState(w));
+    },
+
+    init() {
+      fetch('/api/windows').then(r => r.json()).then(d => this.applySnapshot(d));
+      this.refreshNodes();
+      this.loadHistory(1);
+      // ?snapshot renders a one-shot static view (no live SSE) — handy for
+      // embeds and for headless screenshots.
+      if (!new URLSearchParams(location.search).has('snapshot')) {
+        this.evtSource = new EventSource('/api/events');
+        this.evtSource.addEventListener('snapshot', (e) => {
+          this.applySnapshot(JSON.parse(e.data));
+        });
+        this.evtSource.onerror = () => {
+          setTimeout(() => {
+            if (this.evtSource) this.evtSource.close();
+            this.evtSource = new EventSource('/api/events');
+            this.evtSource.addEventListener('snapshot', (e) => {
+              this.applySnapshot(JSON.parse(e.data));
+            });
+          }, 5000);
+        };
+      }
+      this._applyHashRoute();
+      window.addEventListener('hashchange', () => this._applyHashRoute());
+    },
+
+    // Deep-link views via URL hash: #search=<q>, #timeline=<sid>
+    _applyHashRoute() {
+      const h = decodeURIComponent((location.hash || '').replace(/^#/, ''));
+      if (!h) return;
+      if (h.startsWith('search=')) { this.searchQuery = h.slice(7); this.doSearch(); }
+      else if (h.startsWith('timeline=')) { this.openHistoryTimeline(h.slice(9)); }
+    },
+
+    applySnapshot(snap) {
+      this.windows = snap.windows || [];
+      this.counts = snap.counts || this.counts;
+      if (snap.nodes) {
+        this.nodes = snap.nodes;
+        if (!this.nodes.length) this.launchForm.node_id = '';
+        else if (!this.launchForm.node_id) this.launchForm.node_id = this.nodes[0].id;
+        if (this.nodeFilter && !this.nodes.some(n => n.id === this.nodeFilter)) this.nodeFilter = '';
+      }
+    },
+
+    windowKey(w) {
+      return w?.window_key || `${w?.node_id || 'local'}:${w?.platform || 'claude'}:${w?.pid}`;
+    },
+
+    nodeWindowUrl(w, action) {
+      const nodeId = encodeURIComponent(w.node_id || 'local');
+      const platform = encodeURIComponent(w.route_platform || w.platform || 'claude');
+      return `/api/nodes/${nodeId}/windows/${platform}/${w.pid}/${action}`;
+    },
+
+    nodeSessionUrl(s, action) {
+      const nodeId = encodeURIComponent(s.node_id || 'local');
+      const platform = encodeURIComponent(s.platform || 'claude');
+      return `/api/nodes/${nodeId}/sessions/${platform}/${encodeURIComponent(s.session_id)}/${action}`;
+    },
+
+    terminalUrl(w, suffix = 'terminal') {
+      const nodeId = encodeURIComponent(w.node_id || 'local');
+      const platform = encodeURIComponent(w.route_platform || w.platform || 'claude');
+      return `/api/nodes/${nodeId}/windows/${platform}/${w.pid}/${suffix}`;
+    },
+
+    nodePathUrl(nodeId, path) {
+      const query = path ? `?path=${encodeURIComponent(path)}` : '';
+      return `/api/nodes/${encodeURIComponent(nodeId || 'local')}/paths${query}`;
+    },
+
+    nodeFileUrl(nodeId, path) {
+      const query = path ? `?path=${encodeURIComponent(path)}` : '';
+      return `/api/nodes/${encodeURIComponent(nodeId || 'local')}/files${query}`;
+    },
+
+    nodeFileUploadUrl(nodeId) {
+      return `/api/nodes/${encodeURIComponent(nodeId || 'local')}/files/upload`;
+    },
+
+    isLocalNode(n) {
+      return !!n && n.id === 'local' && (n.kind === 'local' || n.kind === 'agent');
+    },
+
+    nodeSubtitle(n) {
+      if (this.isLocalNode(n)) {
+        if (n.kind === 'agent' && n.agent_port) return `local agent · 127.0.0.1:${n.agent_port}`;
+        return 'local';
+      }
+      const target = `${n.user ? n.user + '@' : ''}${n.host || ''}`;
+      return `${target}:${n.ssh_port || 22}`;
+    },
+
+    selectedLaunchNode() {
+      return this.nodes.find(n => n.id === this.launchForm.node_id) || null;
+    },
+
+    selectedLaunchNodeName() {
+      const node = this.selectedLaunchNode();
+      return node ? (node.name || node.id || '') : (this.launchForm.node_id || '');
+    },
+
+    launchDisplayName() {
+      const explicit = (this.launchForm.name || '').trim();
+      return explicit || this.selectedLaunchNodeName();
+    },
+
+    isBashWindow(w) {
+      return (w?.platform || '') === 'bash';
+    },
+
+    triageLabel(w) {
+      return this.statusLabel(w?.triage);
+    },
+
+    activityLabel(w) {
+      const label = (w?.activity_label || '').trim();
+      if (label) return label;
+      return this.statusLabel(w?.triage);
+    },
+
+    statusLabel(state) {
+      const labels = {
+        working: 'Working',
+        waiting: 'Waiting',
+        stalled: 'Stalled',
+        bash: 'Bash',
+      };
+      return labels[state] || state || '';
+    },
+
+	    platformBadgeClass(platform) {
+	      if (platform === 'codex') return 'bg-green-500';
+	      if (platform === 'bash') return 'bg-slate-500';
+	      return 'bg-blue-500';
+	    },
+
+    closeLabel(w) {
+      return w.alive === false ? 'Close' : 'Terminate';
+    },
+
+    canCloseWindow(w) {
+      if (!Array.isArray(w?.actions) || w.actions.length === 0) return true;
+      return w.actions.includes('close');
+    },
+
+    canRenameWindow(w) {
+      return Array.isArray(w?.actions) && w.actions.includes('rename');
+    },
+
+    isWindowDetailsExpanded(w) {
+      return !!this.expandedWindowDetails[this.windowKey(w)];
+    },
+
+    toggleWindowDetails(w) {
+      const key = this.windowKey(w);
+      this.expandedWindowDetails = {
+        ...this.expandedWindowDetails,
+        [key]: !this.expandedWindowDetails[key],
+      };
+    },
+
+    formatIdle(seconds) {
+      if (seconds < 60) return seconds + 's ago';
+      if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+      return Math.floor(seconds / 3600) + 'h ago';
+    },
+
+    fileExtension(entry) {
+      const name = (entry?.name || '').toLowerCase();
+      const dot = name.lastIndexOf('.');
+      return dot > 0 ? name.slice(dot + 1) : '';
+    },
+
+    fileBadgeLabel(entry) {
+      if (entry?.symlink) return '@';
+      if (entry?.kind === 'directory') return 'DIR';
+      const labels = {
+        md: 'MD',
+        sh: 'SH',
+        py: 'PY',
+        c: 'C',
+        cpp: 'CPP',
+        h: 'H',
+        hpp: 'HPP',
+        txt: 'TXT',
+        sql: 'SQL',
+      };
+      return labels[this.fileExtension(entry)] || 'FILE';
+    },
+
+    fileBadgeClass(entry) {
+      if (entry?.symlink) return 'bg-cyan-50 text-cyan-700';
+      if (entry?.kind === 'directory') return 'bg-amber-50 text-amber-700';
+      const classes = {
+        md: 'bg-blue-50 text-blue-700',
+        sh: 'bg-emerald-50 text-emerald-700',
+        py: 'bg-yellow-50 text-yellow-700',
+        c: 'bg-purple-50 text-purple-700',
+        cpp: 'bg-purple-50 text-purple-700',
+        h: 'bg-violet-50 text-violet-700',
+        hpp: 'bg-violet-50 text-violet-700',
+        txt: 'bg-slate-100 text-slate-600',
+        sql: 'bg-orange-50 text-orange-700',
+      };
+      return classes[this.fileExtension(entry)] || 'bg-slate-100 text-slate-500';
+    },
+
+    isTerminalWindow(w) {
+      return !!(this.terminalWindow && this.windowKey(this.terminalWindow) === this.windowKey(w));
+    },
+
+    async openPrimaryWindow(w) {
+      this.expandedPid = null;
+      this.expandedWindow = null;
+      this.expandedHistoryId = null;
+      this.timelineData = null;
+      this.planData = null;
+      this.showPlanHistory = false;
+      if (w.tmux_session) {
+        await this.openTerminal(w);
+        return;
+      }
+      await this.focusWindow(w);
+    },
+
+    async focusWindow(w) {
+      const r = await fetch(this.nodeWindowUrl(w, 'focus'), { method: 'POST' });
+      const d = await r.json();
+      if (d.ok && d.ssh_command) {
+        this.toast('Attach on your shell: ' + d.ssh_command);
+      } else if (d.ok && d.attach_command) {
+        this.toast('Attach on the node: ' + d.attach_command);
+      } else if (!d.ok && d.attach_command) {
+        this.toast('Attach on the node: ' + d.attach_command);
+      } else if (!d.ok) {
+        this.toast('Focus failed: ' + (d.error || ''));
+      }
+      if (w.tmux_session) {
+        await this.openTerminal(w);
+      }
+    },
+
+    async openTerminal(w) {
+      this.closeTerminalSession();
+      this.terminalWindow = w;
+      this.terminalPanelTab = 'terminal';
+      this.resetEditor();
+      this.terminalExplorer = {
+        loading: false,
+        uploading: false,
+        path: '',
+        pathInput: '',
+        parent: '',
+        home: '',
+        entries: [],
+        error: '',
+        uploadError: '',
+      };
+      this.$nextTick(() => {
+        this.$refs.terminalPanel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        this.startTerminalSession();
+      });
+      await this.loadTerminalPath(w.cwd || '');
+    },
+
+    async loadTerminalPath(path) {
+      if (!this.terminalWindow) return;
+      this.terminalExplorer.loading = true;
+      this.terminalExplorer.error = '';
+      this.terminalExplorer.uploadError = '';
+      try {
+        const r = await fetch(this.nodePathUrl(this.terminalWindow.node_id || 'local', path || ''));
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          this.terminalExplorer.entries = [];
+          this.terminalExplorer.error = d.detail || d.error || 'Path browse failed';
+          return;
+        }
+        this.terminalExplorer.path = d.path || '';
+        this.terminalExplorer.pathInput = d.path || '';
+        this.terminalExplorer.parent = d.parent || '';
+        this.terminalExplorer.home = d.home || '';
+        this.terminalExplorer.entries = d.entries || [];
+      } catch (e) {
+        this.terminalExplorer.entries = [];
+        this.terminalExplorer.error = String(e);
+      } finally {
+        this.terminalExplorer.loading = false;
+      }
+    },
+
+    async jumpTerminalPath() {
+      const path = (this.terminalExplorer.pathInput || '').trim();
+      await this.loadTerminalPath(path || this.terminalExplorer.home || '');
+    },
+
+    async selectTerminalPath(entry) {
+      if (!entry.readable) {
+        this.toast('Path is not readable');
+        return;
+      }
+      if (entry.kind !== 'directory') {
+        this.terminalExplorer.pathInput = entry.path;
+        await this.openEditorFile(entry.path);
+        return;
+      }
+      await this.loadTerminalPath(entry.path);
+    },
+
+    readFileAsBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const value = String(reader.result || '');
+          const comma = value.indexOf(',');
+          resolve(comma >= 0 ? value.slice(comma + 1) : value);
+        };
+        reader.onerror = () => reject(reader.error || new Error('File read failed'));
+        reader.readAsDataURL(file);
+      });
+    },
+
+    async uploadTerminalFile(event) {
+      const input = event?.target;
+      const file = input?.files?.[0];
+      if (!file) return;
+      if (!this.terminalWindow) {
+        input.value = '';
+        return;
+      }
+      const directory = this.terminalExplorer.path || this.terminalWindow.cwd || '';
+      if (!directory) {
+        this.toast('Open a folder first');
+        input.value = '';
+        return;
+      }
+      this.terminalExplorer.uploading = true;
+      this.terminalExplorer.uploadError = '';
+      try {
+        const contentBase64 = await this.readFileAsBase64(file);
+        const r = await fetch(this.nodeFileUploadUrl(this.terminalWindow.node_id || 'local'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            directory,
+            name: file.name,
+            content_base64: contentBase64,
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          const message = d.detail || d.error || 'File upload failed';
+          this.terminalExplorer.uploadError = message;
+          this.toast('Upload failed: ' + message);
+          return;
+        }
+        await this.loadTerminalPath(d.directory || directory);
+        this.toast((d.overwritten ? 'Replaced ' : 'Uploaded ') + (d.name || file.name));
+      } catch (e) {
+        const message = String(e.message || e);
+        this.terminalExplorer.uploadError = message;
+        this.toast('Upload failed: ' + message);
+      } finally {
+        this.terminalExplorer.uploading = false;
+        input.value = '';
+      }
+    },
+
+    setTerminalTab(tab) {
+      if (tab !== 'terminal' && tab !== 'editor') return;
+      this.terminalPanelTab = tab;
+      if (tab === 'terminal') {
+        this.$nextTick(() => {
+          this.fitTerminal();
+          this.terminal?.focus();
+        });
+      }
+    },
+
+    resetEditor() {
+      this.editor = {
+        path: '',
+        content: '',
+        originalContent: '',
+        loading: false,
+        saving: false,
+        deleting: false,
+        dirty: false,
+        error: '',
+      };
+    },
+
+    async openEditorFile(path) {
+      if (!this.terminalWindow || !path) return;
+      if (this.editor.dirty && this.editor.path && this.editor.path !== path) {
+        const ok = confirm('Discard unsaved editor changes?');
+        if (!ok) return;
+      }
+      this.terminalPanelTab = 'editor';
+      this.editor.loading = true;
+      this.editor.error = '';
+      try {
+        const r = await fetch(this.nodeFileUrl(this.terminalWindow.node_id || 'local', path));
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          this.editor.error = d.detail || d.error || 'File read failed';
+          return;
+        }
+        const content = d.content || '';
+        this.editor.path = d.path || path;
+        this.editor.content = content;
+        this.editor.originalContent = content;
+        this.editor.dirty = false;
+      } catch (e) {
+        this.editor.error = String(e);
+      } finally {
+        this.editor.loading = false;
+      }
+    },
+
+    async deleteEditorFile() {
+      if (!this.terminalWindow || !this.editor.path || this.editor.loading || this.editor.saving || this.editor.deleting) return;
+      const path = this.editor.path;
+      if (!confirm('Delete ' + path + '?')) return;
+      this.editor.deleting = true;
+      this.editor.error = '';
+      try {
+        const r = await fetch(this.nodeFileUrl(this.terminalWindow.node_id || 'local', path), {
+          method: 'DELETE',
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          this.editor.error = d.detail || d.error || 'File delete failed';
+          return;
+        }
+        const directory = d.directory || this.terminalExplorer.path || this.terminalWindow.cwd || '';
+        this.resetEditor();
+        this.terminalPanelTab = 'editor';
+        if (directory) await this.loadTerminalPath(directory);
+        this.toast('Deleted ' + (d.name || path));
+      } catch (e) {
+        this.editor.error = String(e);
+      } finally {
+        this.editor.deleting = false;
+      }
+    },
+
+    handleEditorKeydown(event) {
+      const key = String(event?.key || '').toLowerCase();
+      if (key !== 's' || (!event.ctrlKey && !event.metaKey)) return;
+      event.preventDefault();
+      this.saveEditorFile();
+    },
+
+    async saveEditorFile() {
+      if (!this.terminalWindow || !this.editor.path || this.editor.loading || this.editor.saving || this.editor.deleting) return;
+      this.editor.saving = true;
+      this.editor.error = '';
+      try {
+        const r = await fetch(this.nodeFileUrl(this.terminalWindow.node_id || 'local', ''), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: this.editor.path, content: this.editor.content }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          this.editor.error = d.detail || d.error || 'File save failed';
+          return;
+        }
+        this.editor.path = d.path || this.editor.path;
+        this.editor.originalContent = this.editor.content;
+        this.editor.dirty = false;
+        this.toast('Saved ' + (d.name || this.editor.path));
+      } catch (e) {
+        this.editor.error = String(e);
+      } finally {
+        this.editor.saving = false;
+      }
+    },
+
+    startTerminalPathDrag(event, entry) {
+      if (!entry?.readable || !entry.path) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData('application/x-lucid-path', entry.path);
+      event.dataTransfer.setData('text/plain', entry.path);
+    },
+
+    shellSingleQuote(text) {
+      return "'" + String(text || '').replaceAll("'", "'\\''") + "'";
+    },
+
+    hasTerminalPathDrag(event) {
+      return Array.from(event.dataTransfer?.types || []).includes('application/x-lucid-path');
+    },
+
+    handleTerminalDragOver(event) {
+      if (!this.hasTerminalPathDrag(event)) return;
+      event.dataTransfer.dropEffect = 'copy';
+      this.terminalDropActive = true;
+    },
+
+    dropTerminalPath(event) {
+      this.terminalDropActive = false;
+      const path = event.dataTransfer?.getData('application/x-lucid-path') || '';
+      if (!path) return;
+      this.sendTerminalData(this.shellSingleQuote(path));
+      this.terminal?.focus();
+    },
+
+    closeTerminalSession() {
+      if (this.terminalResizeObserver) this.terminalResizeObserver.disconnect();
+      this.terminalResizeObserver = null;
+      if (this.terminalSocket) this.terminalSocket.close();
+      this.terminalSocket = null;
+      if (this.terminalDataDisposable) this.terminalDataDisposable.dispose();
+      this.terminalDataDisposable = null;
+      if (this.terminalCopyHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('copy', this.terminalCopyHandler, true);
+      }
+      this.terminalCopyHandler = null;
+      if (this.terminalPasteHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('paste', this.terminalPasteHandler, true);
+      }
+      this.terminalPasteHandler = null;
+      if (this.terminalWheelHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('wheel', this.terminalWheelHandler, true);
+      }
+      this.terminalWheelHandler = null;
+      this.terminalWheelRemainder = 0;
+      this.terminalLastPasteData = '';
+      this.terminalLastPasteAt = 0;
+      if (this.terminal) this.terminal.dispose();
+      this.terminal = null;
+      this.terminalFitAddon = null;
+    },
+
+    closeTerminal() {
+      this.closeTerminalSession();
+      this.terminalWindow = null;
+      this.terminalPanelTab = 'terminal';
+      this.resetEditor();
+      this.terminalExplorer = {
+        loading: false,
+        uploading: false,
+        path: '',
+        pathInput: '',
+        parent: '',
+        home: '',
+        entries: [],
+        error: '',
+        uploadError: '',
+      };
+    },
+
+    async reconnectTerminal() {
+      if (!this.terminalWindow) return;
+      this.closeTerminalSession();
+      this.$nextTick(() => this.startTerminalSession());
+    },
+
+    terminalWsUrl(w) {
+      const url = new URL(this.terminalUrl(w, 'terminal/ws'), window.location.href);
+      url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const dims = this.terminalDimensions();
+      url.searchParams.set('cols', String(dims.cols));
+      url.searchParams.set('rows', String(dims.rows));
+      return url.toString();
+    },
+
+    terminalDimensions() {
+      return {
+        cols: Math.max(20, this.terminal?.cols || 80),
+        rows: Math.max(5, this.terminal?.rows || 24),
+      };
+    },
+
+    startTerminalSession() {
+      if (!this.terminalWindow) return;
+      const el = this.$refs.terminalOutput;
+      if (!el) return;
+      if (!window.Terminal) {
+        el.textContent = 'xterm.js failed to load. Check browser network access to the CDN.';
+        return;
+      }
+      el.innerHTML = '';
+      const term = new Terminal({
+        cursorBlink: true,
+        convertEol: false,
+        allowProposedApi: false,
+        scrollback: 100000,
+        scrollOnUserInput: true,
+        scrollOnWrite: false,
+        fastScrollModifier: 'alt',
+        fastScrollSensitivity: 5,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+        fontSize: 12,
+        lineHeight: 1.25,
+        theme: {
+          background: '#020617',
+          foreground: '#e2e8f0',
+          cursor: '#f8fafc',
+          selectionBackground: '#475569',
+        },
+      });
+      const fitAddon = window.FitAddon ? new window.FitAddon.FitAddon() : null;
+      if (fitAddon) term.loadAddon(fitAddon);
+      term.open(el);
+      this.terminal = term;
+      this.terminalFitAddon = fitAddon;
+      this.terminalLastPasteData = '';
+      this.terminalLastPasteAt = 0;
+      this.terminalWheelRemainder = 0;
+      this.fitTerminal();
+      const ws = new WebSocket(this.terminalWsUrl(this.terminalWindow));
+      this.terminalSocket = ws;
+      term.writeln('\r\n\x1b[90m[LUCID] connecting to tmux...\x1b[0m');
+      ws.addEventListener('open', () => {
+        term.clear();
+        this.fitTerminal();
+        this.sendTerminalResize();
+        term.focus();
+      });
+      ws.addEventListener('message', (event) => {
+        term.write(typeof event.data === 'string' ? event.data : '');
+      });
+      ws.addEventListener('close', () => {
+        term.writeln('\r\n\x1b[90m[LUCID] terminal disconnected\x1b[0m');
+      });
+      ws.addEventListener('error', () => {
+        term.writeln('\r\n\x1b[31m[LUCID] terminal websocket error\x1b[0m');
+      });
+      this.terminalDataDisposable = term.onData(data => {
+        this.sendTerminalData(data);
+      });
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.type !== 'keydown') return true;
+        const key = (event.key || '').toLowerCase();
+        const ctrlOrMeta = event.ctrlKey || event.metaKey;
+        const pasteShortcut = (ctrlOrMeta && key === 'v') || (event.shiftKey && key === 'insert');
+        if (pasteShortcut) {
+          this.terminal?.focus();
+          return false;
+        }
+        const copyShortcut = ctrlOrMeta && key === 'c';
+        if (copyShortcut && term.hasSelection()) {
+          event.preventDefault();
+          let copied = false;
+          try {
+            copied = document.execCommand('copy');
+          } catch (_) {}
+          if (copied) this.clearTerminalSelection();
+          if (!copied) this.copyTerminalSelection();
+          return false;
+        }
+        return true;
+      });
+      this.terminalCopyHandler = (event) => {
+        const text = this.terminal?.getSelection() || '';
+        if (!text) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.clipboardData) {
+          event.clipboardData.setData('text/plain', text);
+          this.clearTerminalSelection();
+          this.toast('Copied to clipboard');
+        } else {
+          this.copyTerminalSelection();
+        }
+      };
+      el.addEventListener('copy', this.terminalCopyHandler, true);
+      this.terminalPasteHandler = (event) => {
+        const text = event.clipboardData?.getData('text/plain') || '';
+        if (!text) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.sendTerminalPaste(text);
+        this.terminal?.focus();
+      };
+      el.addEventListener('paste', this.terminalPasteHandler, true);
+      this.terminalWheelHandler = (event) => {
+        this.sendTerminalScroll(event);
+      };
+      el.addEventListener('wheel', this.terminalWheelHandler, { capture: true, passive: false });
+      this.terminalResizeObserver = new ResizeObserver(() => {
+        this.fitTerminal();
+        this.sendTerminalResize();
+      });
+      this.terminalResizeObserver.observe(el);
+    },
+
+    fitTerminal() {
+      try {
+        this.terminalFitAddon?.fit();
+      } catch (_) {}
+    },
+
+    sendTerminalResize() {
+      const ws = this.terminalSocket;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const dims = this.terminalDimensions();
+      ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+    },
+
+    sendTerminalKey(key) {
+      const map = { Enter: '\r', 'C-c': '\x03' };
+      const data = map[key] || key;
+      this.sendTerminalData(data);
+      this.terminal?.focus();
+    },
+
+    sendTerminalData(data, options = {}) {
+      if (!data) return;
+      const duplicatePaste = !options.fromPaste
+        && data === this.terminalLastPasteData
+        && Date.now() - this.terminalLastPasteAt < 500;
+      if (duplicatePaste) return;
+      if (this.terminalSocket?.readyState === WebSocket.OPEN) {
+        this.terminalSocket.send(JSON.stringify({ type: 'data', data }));
+      }
+    },
+
+    sendTerminalScroll(event) {
+      if (!event || !this.terminalSocket || this.terminalSocket.readyState !== WebSocket.OPEN) return;
+      const delta = event.deltaY || event.deltaX || 0;
+      if (!delta) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const lineHeight = this.terminal?._core?._renderService?.dimensions?.css?.cell?.height || 15;
+      const lineDeltaMode = typeof WheelEvent !== 'undefined' ? WheelEvent.DOM_DELTA_LINE : 1;
+      const unit = event.deltaMode === lineDeltaMode ? 1 : lineHeight;
+      this.terminalWheelRemainder += delta / Math.max(1, unit);
+      const direction = this.terminalWheelRemainder > 0 ? 'down' : 'up';
+      const lines = Math.min(200, Math.floor(Math.abs(this.terminalWheelRemainder)));
+      if (!lines) return;
+      this.terminalWheelRemainder += direction === 'down' ? -lines : lines;
+      this.terminalSocket.send(JSON.stringify({ type: 'scroll', direction, lines }));
+    },
+
+    normalizeTerminalPasteData(data) {
+      return String(data || '').replace(/\r\n?/g, '\n').replace(/\n+/g, ' ');
+    },
+
+    sendTerminalPaste(data) {
+      const pasteData = this.normalizeTerminalPasteData(data);
+      if (!pasteData) return;
+      const now = Date.now();
+      if (pasteData === this.terminalLastPasteData && now - this.terminalLastPasteAt < 500) {
+        return;
+      }
+      this.terminalLastPasteData = pasteData;
+      this.terminalLastPasteAt = now;
+      this.sendTerminalData(pasteData, { fromPaste: true });
+    },
+
+    canReadClipboard() {
+      return typeof navigator !== 'undefined' && !!(navigator.clipboard && navigator.clipboard.readText);
+    },
+
+    async copyTerminalSelection() {
+      const text = this.terminal?.getSelection() || '';
+      if (!text) {
+        this.toast('No terminal selection');
+        this.terminal?.focus();
+        return;
+      }
+      if (await this.copyText(text)) {
+        this.clearTerminalSelection();
+      }
+    },
+
+    clearTerminalSelection() {
+      try {
+        this.terminal?.clearSelection();
+      } catch (_) {}
+    },
+
+    async pasteTerminalClipboard() {
+      if (!this.canReadClipboard()) {
+        this.toast('Browser blocks direct paste here. Focus terminal and press Ctrl+V.');
+        this.terminal?.focus();
+        return;
+      }
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) {
+          this.toast('Clipboard has no text');
+          this.terminal?.focus();
+          return;
+        }
+        this.sendTerminalPaste(text);
+        this.terminal?.focus();
+      } catch (e) {
+        this.toast('Paste failed: ' + (e.message || e));
+        this.terminal?.focus();
+      }
+    },
+
+    async terminateTerminalWindow() {
+      if (!this.terminalWindow) return;
+      const label = this.terminalWindow.name || this.terminalWindow.project_name || this.terminalWindow.pid;
+      if (!confirm('Terminate ' + label + '?')) return;
+      const d = await this.closeWindow(this.terminalWindow);
+      if (d.ok) this.closeTerminal();
+    },
+
+    async forkWindow(w) {
+      const session = { node_id: w.node_id || 'local', platform: w.platform || 'claude', session_id: w.session_id };
+      const r = await fetch(this.nodeSessionUrl(session, 'fork'), { method: 'POST' });
+      const d = await r.json();
+      this.toast(d.ok ? 'Forked → new session (inherits history)' : 'Fork failed: ' + (d.error || ''));
+    },
+
+    async reviewWindow(w) {
+      const key = this.windowKey(w);
+      if (this.reviewStatuses[key] === 'done') {
+        const r = await fetch(this.nodeWindowUrl(w, 'review'));
+        const d = await r.json();
+        this.reviewVerdicts[key] = d.verdict || d.error || 'no result';
+        return;
+      }
+      this.toast('Starting background review...');
+      this.reviewStatuses[key] = 'running';
+      const r = await fetch(this.nodeWindowUrl(w, 'review'), { method: 'POST' });
+      const d = await r.json();
+      if (!d.ok) {
+        this.toast('Review failed: ' + (d.error || ''));
+        this.reviewStatuses[key] = null;
+        return;
+      }
+      this.toast('Review started for ' + (d.name || w.pid) + ', polling...');
+      this._pollReview(w);
+    },
+
+    async _pollReview(w) {
+      const key = this.windowKey(w);
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const r = await fetch(this.nodeWindowUrl(w, 'review'));
+        const d = await r.json();
+        if (d.status === 'done') {
+          this.reviewStatuses[key] = 'done';
+          this.reviewVerdicts[key] = d.verdict || '';
+          this.toast('Review complete for ' + (d.name || w.pid));
+          return;
+        }
+        if (d.status === 'error') {
+          this.reviewStatuses[key] = null;
+          this.toast('Review error: ' + (d.error || ''));
+          return;
+        }
+      }
+      this.reviewStatuses[key] = null;
+      this.toast('Review timed out');
+    },
+
+    startRenameWindow(w) {
+      this.renameWindowKey = this.windowKey(w);
+      this.renameWindowName = w.display_name || w.name || '';
+    },
+
+    cancelRenameWindow() {
+      this.renameWindowKey = null;
+      this.renameWindowName = '';
+      this.renamingWindowKey = null;
+    },
+
+    async saveWindowName(w) {
+      const key = this.windowKey(w);
+      const name = (this.renameWindowName || '').trim();
+      this.renamingWindowKey = key;
+      try {
+        const r = await fetch(this.nodeWindowUrl(w, 'rename'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          this.toast('Rename failed: ' + (d.error || ''));
+          return;
+        }
+        this.renameWindowKey = null;
+        this.renameWindowName = '';
+        const snap = await fetch('/api/windows').then(r => r.json());
+        this.applySnapshot(snap);
+        if (this.terminalWindow && this.windowKey(this.terminalWindow) === key) {
+          this.terminalWindow = this.windows.find(item => this.windowKey(item) === key) || this.terminalWindow;
+        }
+        this.toast(name ? 'Renamed terminal' : 'Cleared terminal name');
+      } finally {
+        this.renamingWindowKey = null;
+      }
+    },
+
+    async closeWindow(w) {
+      const r = await fetch(this.nodeWindowUrl(w, 'close'), { method: 'POST' });
+      const d = await r.json();
+      this.toast(d.ok ? 'Closed ' + (d.name || w.pid) : 'Failed: ' + (d.error || ''));
+      if (d.ok) {
+        const s = await fetch('/api/windows').then(r => r.json());
+        this.applySnapshot(s);
+        if (this.terminalWindow && this.windowKey(this.terminalWindow) === this.windowKey(w)) {
+          this.closeTerminal();
+        }
+      }
+      return d;
+    },
+
+    async toggleTimeline(w) {
+      const key = this.windowKey(w);
+      if (this.expandedPid === key) {
+        this.expandedPid = null; this.expandedWindow = null; this.timelineData = null; this.planData = null;
+        return;
+      }
+      this.expandedPid = key;
+      this.expandedWindow = w;
+      this.expandedHistoryId = null;
+      this.planData = null;
+      this.showPlanHistory = false;
+      const r = await fetch(this.nodeWindowUrl(w, 'timeline'));
+      this.timelineData = await r.json();
+      this.$nextTick(() => this.$refs.timelinePanel?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    },
+
+    async loadPlan(w) {
+      const r = await fetch(`/api/nodes/${encodeURIComponent(w.node_id || 'local')}/windows/${w.pid}/plan`);
+      this.planData = await r.json();
+    },
+
+    async openTimelineForSession(sessionId) {
+      const w = this.windows.find(w => w.session_id === sessionId);
+      if (w) {
+        this.toggleTimeline(w);
+        this.searchResults = null;
+      } else {
+        await this.openHistoryTimeline(sessionId);
+        this.searchResults = null;
+      }
+    },
+
+    async openTimelineForHit(hit) {
+      const w = this.windows.find(w =>
+        w.session_id === hit.session_id &&
+        (w.node_id || 'local') === (hit.node_id || 'local') &&
+        (w.platform || 'claude') === (hit.platform || 'claude')
+      );
+      if (w) {
+        await this.toggleTimeline(w);
+      } else {
+        await this.openHistoryTimeline(hit);
+      }
+      this.searchResults = null;
+    },
+
+    async doSearch() {
+      if (!this.searchQuery.trim()) { this.searchResults = null; return; }
+      const r = await fetch(`/api/search?q=${encodeURIComponent(this.searchQuery)}&limit=40`);
+      const d = await r.json();
+      this.searchResults = d.hits || [];
+    },
+
+    async loadHistory(page) {
+      if (page < 1) return;
+      const q = this.historyQuery ? `&q=${encodeURIComponent(this.historyQuery)}` : '';
+      const r = await fetch(`/api/history?page=${page}&limit=${this.historyLimit}${q}`);
+      const d = await r.json();
+      this.historySessions = d.sessions || [];
+      this.historyTotal = d.total || 0;
+      this.historyPage = d.page || 1;
+    },
+
+    async openHistoryTimeline(sessionOrId) {
+      const session = typeof sessionOrId === 'string'
+        ? { session_id: sessionOrId, node_id: 'local', platform: 'claude' }
+        : sessionOrId;
+      const sessionId = session.session_id;
+      this.expandedPid = null;
+      this.expandedWindow = null;
+      this.expandedHistoryId = session.session_key || `${session.node_id || 'local'}:${session.platform || 'claude'}:${sessionId}`;
+      this.planData = null;
+      const r = session.node_id
+        ? await fetch(`/api/nodes/${encodeURIComponent(session.node_id)}/sessions/${encodeURIComponent(session.platform || 'claude')}/${encodeURIComponent(sessionId)}/timeline`)
+        : await fetch(`/api/history/${encodeURIComponent(sessionId)}/timeline`);
+      if (r.ok) {
+        this.timelineData = await r.json();
+        this.$nextTick(() => this.$refs.timelinePanel?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+      } else {
+        this.toast('No transcript for this session');
+        this.expandedHistoryId = null;
+      }
+    },
+
+    async resumeSession(s) {
+      const r = await fetch(this.nodeSessionUrl(s, 'resume'), { method: 'POST' });
+      const d = await r.json();
+      if (d.ok) {
+        this.toast(d.action === 'focused' ? 'Focused existing window' : 'Resumed session');
+      } else {
+        this.toast('Resume failed: ' + (d.error || ''));
+      }
+    },
+
+    async forkHistorySession(s) {
+      const r = await fetch(this.nodeSessionUrl(s, 'fork'), { method: 'POST' });
+      const d = await r.json();
+      this.toast(d.ok ? 'Forked → new session (inherits history)' : 'Fork failed: ' + (d.error || ''));
+    },
+
+    scrollToSkill(skillName) {
+      const events = this.timelineData?.events || [];
+      const idx = events.findIndex(e => e.kind === 'skill_invoke' && e.tool === skillName);
+      if (idx >= 0) {
+        const el = document.getElementById('tl-ev-' + idx);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('bg-purple-50');
+          setTimeout(() => el.classList.remove('bg-purple-50'), 2000);
+        }
+      } else {
+        this.toast('Skill event not in visible timeline');
+      }
+    },
+
+    async showMemoryDetail(name, operation, nodeId = '') {
+      this.memoryDetail = { name, viewOp: operation, content: 'Loading...' };
+      try {
+        const url = nodeId
+          ? `/api/nodes/${encodeURIComponent(nodeId)}/memory/${encodeURIComponent(name)}`
+          : `/api/memory/${encodeURIComponent(name)}`;
+        const r = await fetch(url);
+        if (r.ok) {
+          const d = await r.json();
+          this.memoryDetail = { ...d, viewOp: operation };
+        } else {
+          this.memoryDetail = { name, viewOp: operation, description: '', type: '', content: '(memory file not found)' };
+        }
+      } catch(e) {
+        this.memoryDetail = { name, viewOp: operation, description: '', type: '', content: 'Error: ' + e.message };
+      }
+    },
+
+    async showCurrentPlan() {
+      // For active windows use /api/windows/{pid}/plan; for history sessions
+      // fall back to scanning plan_history for the latest write content.
+      if (this.expandedWindow) {
+        const r = await fetch(`/api/nodes/${encodeURIComponent(this.expandedWindow.node_id || 'local')}/windows/${this.expandedWindow.pid}/plan`);
+        this.planData = await r.json();
+        if (!this.planData?.plan) this.planData = null;
+      } else {
+        // history session: reconstruct latest from plan_history
+        const writes = (this.timelineData?.plan_history || []).filter(p => p.operation === 'write');
+        if (writes.length) {
+          const latest = writes[writes.length - 1];
+          this.planData = { plan: { name: latest.plan_file, content: latest.content } };
+        } else {
+          this.toast('No write snapshot available');
+        }
+      }
+    },
+
+    async copyText(text) {
+      const value = text || '';
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('clipboard API unavailable');
+        await navigator.clipboard.writeText(value);
+        this.toast('Copied to clipboard');
+        return true;
+      } catch(e) {
+        if (this.copyTextFallback(value)) {
+          this.toast('Copied to clipboard');
+          return true;
+        } else {
+          this.toast('Copy failed: ' + (e.message || e));
+          return false;
+        }
+      }
+    },
+
+    copyTextFallback(text) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text || '';
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.style.left = '-1000px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return copied;
+      } catch (_) {
+        return false;
+      }
+    },
+
+    async copyPlanContent() {
+      const txt = this.planData?.plan?.content || '';
+      try {
+        await navigator.clipboard.writeText(txt);
+        this.copyButtonText = 'Copied ✓';
+        setTimeout(() => { this.copyButtonText = 'Copy'; }, 2000);
+      } catch(e) {
+        // Fallback: select textarea
+        const ta = this.$refs.planTextarea;
+        if (ta) { ta.select(); document.execCommand('copy'); }
+        this.copyButtonText = 'Copied (fallback)';
+        setTimeout(() => { this.copyButtonText = 'Copy'; }, 2000);
+      }
+    },
+
+    async refreshNodes() {
+      const r = await fetch('/api/nodes');
+      const d = await r.json();
+      this.nodes = d.nodes || [];
+      this.sshHistory = d.ssh_history || [];
+      if (this.sshHistory.length && this.isDeployFormDefault()) {
+        this.applySshHistory(this.sshHistory[0], false);
+      }
+      this.localEnabled = !!d.local_enabled || this.nodes.some(n => this.isLocalNode(n));
+      if (this.nodes.length === 0) {
+        this.launchForm.node_id = '';
+      } else if ((!this.launchForm.node_id || !this.nodes.some(n => n.id === this.launchForm.node_id)) && this.nodes.length) {
+        this.launchForm.node_id = this.nodes[0].id;
+      }
+      if (this.nodeFilter && !this.nodes.some(n => n.id === this.nodeFilter)) this.nodeFilter = '';
+    },
+
+    isDeployFormDefault() {
+      const f = this.deployForm;
+      const defaultRemote = '~/.lucid/agent';
+      const agentPort = Number(f.agent_port || 0);
+      return !f.id &&
+        !f.node_name &&
+        !f.host &&
+        !f.user &&
+        !f.password &&
+        (Number(f.ssh_port || 22) === 22) &&
+        agentPort === 0 &&
+        (!f.remote_dir || f.remote_dir === defaultRemote) &&
+        (!f.python_command || f.python_command === 'auto');
+    },
+
+    applySshHistory(row, notify = true) {
+      if (!row) return;
+      this.deployForm.id = row.id || '';
+      this.deployForm.node_name = row.node_name || '';
+      this.deployForm.host = row.host || '';
+      this.deployForm.user = row.user || '';
+      this.deployForm.password = row.password || '';
+      this.deployForm.remember_password = true;
+      this.deployForm.ssh_port = row.ssh_port || 22;
+      this.deployForm.agent_port = row.agent_port || '';
+      this.deployForm.python_command = row.python_command || 'auto';
+      this.deployForm.remote_dir = row.remote_dir || '~/.lucid/agent';
+      if (notify) this.toast('Loaded SSH history: ' + (row.id || row.host));
+    },
+
+    async enableLocalNode() {
+      if (this.enablingLocal) return;
+      this.enablingLocal = true;
+      this.toast('Installing local tmux runtime...');
+      try {
+        const r = await fetch('/api/nodes/local/enable', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          this.toast('Enable local failed: ' + (d.detail || d.error || 'unknown error'));
+          return;
+        }
+        await this.refreshNodes();
+        this.launchForm.node_id = 'local';
+        this.toast('Local node enabled');
+      } catch (e) {
+        this.toast('Enable local failed: ' + String(e));
+      } finally {
+        this.enablingLocal = false;
+      }
+    },
+
+    handleLaunchNodeChange() {
+      if (this.pathBrowser.open) {
+        this.openPathBrowser();
+      }
+    },
+
+    handleLaunchPlatformChange() {
+      const current = (this.launchForm.command || '').trim();
+      if (!current || current === 'codex' || current === 'claude') {
+        this.launchForm.command = this.launchForm.platform;
+      }
+    },
+
+    async togglePathBrowser() {
+      if (this.pathBrowser.open) {
+        this.pathBrowser.open = false;
+        return;
+      }
+      await this.openPathBrowser();
+    },
+
+    async openPathBrowser() {
+      if (!this.launchForm.node_id) {
+        this.toast('Choose a node first');
+        return;
+      }
+      this.pathBrowser.open = true;
+      await this.loadPath(this.launchForm.cwd || '');
+    },
+
+    async loadPath(path) {
+      if (!this.launchForm.node_id) return;
+      this.pathBrowser.loading = true;
+      this.pathBrowser.error = '';
+      const query = path ? `?path=${encodeURIComponent(path)}` : '';
+      try {
+        const r = await fetch(`/api/nodes/${encodeURIComponent(this.launchForm.node_id)}/paths${query}`);
+        const d = await r.json();
+        if (!r.ok || d.ok === false) {
+          this.pathBrowser.entries = [];
+          this.pathBrowser.error = d.detail || d.error || 'Path browse failed';
+          return;
+        }
+        this.pathBrowser.path = d.path || '';
+        this.pathBrowser.parent = d.parent || '';
+        this.pathBrowser.home = d.home || '';
+        this.pathBrowser.entries = d.entries || [];
+        this.launchForm.cwd = d.path || '';
+      } catch (e) {
+        this.pathBrowser.entries = [];
+        this.pathBrowser.error = String(e);
+      } finally {
+        this.pathBrowser.loading = false;
+      }
+    },
+
+    async selectLaunchPath(entry) {
+      if (entry.kind !== 'directory' || !entry.readable) {
+        this.toast('Folder is not readable');
+        return;
+      }
+      await this.loadPath(entry.path);
+    },
+
+    async deployNode() {
+      if (!this.deployForm.id || !this.deployForm.host || !this.deployForm.user) {
+        this.toast('Node id, host, and user are required');
+        return;
+      }
+      this.deploying = true;
+      const payload = { ...this.deployForm };
+      if (!payload.remember_password) {
+        this.deployForm.password = '';
+      }
+      this.deployStatus = {
+        job_id: '',
+        status: 'starting',
+        step: 'start',
+        message: 'Starting deploy job',
+        next_action: 'Waiting for backend job id.',
+        events: [],
+        error: '',
+      };
+      try {
+        const r = await fetch('/api/nodes/deploy/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok || !d.job_id) {
+          throw new Error(d.detail || d.error || 'deploy job failed to start');
+        }
+        this.applyDeployStatus(d);
+        await this.pollDeployJob(d.job_id);
+      } catch (e) {
+        this.deploying = false;
+        this.deployStatus = {
+          ...this.deployStatus,
+          status: 'failed',
+          step: 'failed',
+          message: 'Deployment failed',
+          next_action: 'Read the error, fix the reported issue, and retry deploy.',
+          error: String(e.message || e),
+        };
+        this.toast('Deploy failed: ' + String(e.message || e));
+        await this.refreshNodes();
+      }
+    },
+
+    syncSummary() {
+      const total = this.syncJobs.length;
+      const done = this.syncJobs.filter(job => job.status === 'succeeded' || job.status === 'failed').length;
+      const failed = this.syncJobs.filter(job => job.status === 'failed').length;
+      if (!total) return this.syncSkipped.length ? this.syncSkipped.length + ' skipped' : '';
+      const suffix = failed ? ', ' + failed + ' failed' : '';
+      return done + '/' + total + ' done' + suffix;
+    },
+
+    async syncAllNodes() {
+      if (this.syncingNodes) return;
+      this.syncingNodes = true;
+      this.syncJobs = [];
+      this.syncSkipped = [];
+      try {
+        const r = await fetch('/api/nodes/deploy/sync-all', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          throw new Error(d.detail || d.error || 'sync failed to start');
+        }
+        this.syncJobs = d.jobs || [];
+        this.syncSkipped = d.skipped || [];
+        this.toast(this.syncJobs.length ? 'Started node sync for ' + this.syncJobs.length + ' nodes' : 'No SSH nodes to sync');
+        await this.pollSyncJobs();
+      } catch (e) {
+        this.toast('Sync failed: ' + String(e.message || e));
+      } finally {
+        this.syncingNodes = false;
+      }
+    },
+
+    async pollSyncJobs() {
+      while (this.syncJobs.some(job => !['succeeded', 'failed'].includes(job.status))) {
+        await new Promise(r => setTimeout(r, 1000));
+        const updates = await Promise.all(this.syncJobs.map(async (job) => {
+          if (['succeeded', 'failed'].includes(job.status)) return job;
+          const r = await fetch(`/api/nodes/deploy/jobs/${encodeURIComponent(job.job_id)}`);
+          const d = await r.json();
+          if (!r.ok) return { ...job, status: 'failed', error: d.detail || d.error || 'deploy status request failed' };
+          return { ...job, ...d, node_id: job.node_id, node_name: job.node_name };
+        }));
+        this.syncJobs = updates;
+      }
+      const failed = this.syncJobs.filter(job => job.status === 'failed').length;
+      this.toast(failed ? 'Node sync finished with ' + failed + ' failures' : 'Node sync complete');
+      await this.refreshNodes();
+    },
+
+    applyDeployStatus(d) {
+      this.deployStatus = {
+        job_id: d.job_id || this.deployStatus.job_id || '',
+        status: d.status || '',
+        step: d.step || '',
+        message: d.message || '',
+        next_action: d.next_action || '',
+        events: d.events || [],
+        error: d.error || '',
+        result: d.result || null,
+      };
+    },
+
+    async pollDeployJob(jobId) {
+      while (this.deploying) {
+        await new Promise(r => setTimeout(r, 1000));
+        const r = await fetch(`/api/nodes/deploy/jobs/${encodeURIComponent(jobId)}`);
+        const d = await r.json();
+        if (!r.ok) {
+          throw new Error(d.detail || d.error || 'deploy status request failed');
+        }
+        this.applyDeployStatus(d);
+        if (d.status === 'succeeded') {
+          this.deploying = false;
+          const result = d.result || {};
+          this.toast('Agent deployed: ' + result.node_id + ' agent port ' + result.agent_port + ' via local port ' + result.local_port);
+          await this.refreshNodes();
+          return;
+        }
+        if (d.status === 'failed') {
+          this.deploying = false;
+          this.toast('Deploy failed: ' + (d.error || 'unknown error'));
+          await this.refreshNodes();
+          return;
+        }
+      }
+    },
+
+    async launchManaged() {
+      if (!this.launchForm.node_id || !this.launchForm.command.trim()) {
+        this.toast('Choose a node and command');
+        return;
+      }
+      const r = await fetch(`/api/nodes/${encodeURIComponent(this.launchForm.node_id)}/launch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: this.launchForm.platform,
+          command: this.launchForm.command,
+          cwd: this.launchForm.cwd || undefined,
+          display_name: this.launchDisplayName() || undefined,
+          tmux: true,
+        }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        this.toast('Launched tmux session: ' + d.tmux_session);
+        await this.openLaunchedTerminal(d.tmux_session);
+      } else {
+        this.toast('Launch failed: ' + (d.stderr || d.error || d.detail || ''));
+      }
+    },
+
+    async launchNewBash() {
+      if (!this.launchForm.node_id) {
+        this.toast('Choose a node');
+        return;
+      }
+      const r = await fetch(`/api/nodes/${encodeURIComponent(this.launchForm.node_id)}/launch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: 'bash',
+          command: ['bash', '-l'],
+          cwd: this.launchForm.cwd || undefined,
+          tmux: true,
+        }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        this.toast('Launched bash: ' + d.tmux_session);
+        await this.openLaunchedTerminal(d.tmux_session);
+      } else {
+        this.toast('Bash launch failed: ' + (d.stderr || d.error || d.detail || ''));
+      }
+    },
+
+    async openLaunchedTerminal(tmuxSession) {
+      for (let i = 0; i < 12; i++) {
+        await new Promise(r => setTimeout(r, i === 0 ? 700 : 1000));
+        const r = await fetch('/api/windows');
+        const s = await r.json();
+        this.applySnapshot(s);
+        const w = (s.windows || []).find(item => item.tmux_session === tmuxSession);
+        if (w) {
+          await this.openTerminal(w);
+          return;
+        }
+      }
+      this.toast('Launched, but the terminal exited before it appeared in the dashboard.');
+    },
+
+    toast(msg, duration = 10000) {
+      this.toasts.push({ id: this.nextToastId++, message: msg, duration });
+      if (this.toasts.length > 5) this.toasts.shift();
+    },
+  };
+}
+</script>
+</body>
+</html>

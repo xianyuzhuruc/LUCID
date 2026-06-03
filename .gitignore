@@ -1,0 +1,18 @@
+.venv/
+.fleet-runtime/
+.lucid-runtime/
+LUCID.egg-info/
+__pycache__/
+*.pyc
+*.egg-info/
+/tmp/
+*.output
+.DS_Store
+.agent/
+.codex/
+deployment_package
+test
+
+# generated demo data + public mirror clone
+fixtures/demo-home/
+.public-mirror/
