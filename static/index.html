@@ -522,15 +522,29 @@
        x-show="terminalWindow"
        :class="terminalZoom ? 'fixed top-9 left-0 right-0 bottom-0 z-40 bg-white p-3 flex flex-col' : 'mt-6 scroll-mt-24 bg-white rounded-xl shadow border p-5'"
        x-transition>
-    <div class="flex items-center justify-between mb-3">
-      <div class="min-w-0">
-        <h2 class="font-semibold text-sm truncate">
-          <span x-text="terminalWindow?.name || terminalWindow?.project_name || ''"></span>
-          <span class="text-xs text-gray-400 font-normal" x-text="' · ' + (terminalWindow?.node_name || terminalWindow?.node_id || 'local')"></span>
-        </h2>
-        <div class="text-xs text-gray-400 truncate" x-text="'tmux: ' + (terminalWindow?.tmux_session || '')"></div>
+    <div class="flex items-center justify-between mb-3" :class="terminalZoom ? 'mb-1 gap-2' : ''">
+      <div class="min-w-0 flex items-center gap-2">
+        <div class="min-w-0">
+          <h2 class="font-semibold text-sm truncate">
+            <span x-text="terminalWindow?.name || terminalWindow?.project_name || ''"></span>
+            <span class="text-xs text-gray-400 font-normal" x-text="' · ' + (terminalWindow?.node_name || terminalWindow?.node_id || 'local')"></span>
+          </h2>
+          <div class="text-xs text-gray-400 truncate" x-show="!terminalZoom" x-text="'tmux: ' + (terminalWindow?.tmux_session || '')"></div>
+        </div>
+        <!-- tabs inline in zoom mode -->
+        <div x-show="terminalZoom" class="flex items-center gap-1">
+          <button @click="setTerminalTab('terminal')"
+                  class="px-2 py-0.5 text-xs rounded"
+                  :class="terminalPanelTab === 'terminal' ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
+            Terminal</button>
+          <button @click="setTerminalTab('editor')"
+                  class="px-2 py-0.5 text-xs rounded"
+                  :class="terminalPanelTab === 'editor' ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
+            Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
+          <span class="text-[11px] text-gray-400" x-show="terminalPanelTab === 'editor'" x-text="editor.path || 'No file selected'"></span>
+        </div>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 shrink-0">
         <button @click="sendTerminalKey('Enter')"
                 class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Enter</button>
         <button @click="copyTerminalSelection()"
@@ -555,7 +569,7 @@
         <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
       </div>
     </div>
-    <div class="mb-3 flex items-center gap-1 border-b border-gray-200">
+    <div x-show="!terminalZoom" class="mb-3 flex items-center gap-1 border-b border-gray-200">
       <button @click="setTerminalTab('terminal')"
               class="border-x border-t px-3 py-1.5 text-xs"
               :class="terminalPanelTab === 'terminal' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white text-gray-500 border-gray-200 hover:bg-gray-50'">
@@ -566,8 +580,8 @@
         Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
       <span class="min-w-0 flex-1 truncate px-2 text-[11px] text-gray-400" x-text="terminalPanelTab === 'editor' ? (editor.path || 'No file selected') : ''"></span>
     </div>
-    <!-- terminal + sidebar area -->
-    <div x-show="terminalPanelTab === 'terminal'" class="flex gap-0"
+    <!-- sidebar + content area -->
+    <div class="flex gap-0"
          :class="terminalZoom ? 'flex-1 min-h-0' : 'lg:h-[40rem]'">
       <!-- sidebar -->
       <aside x-show="terminalSidebarOpen"
@@ -663,39 +677,40 @@
         <span class="text-[10px] text-gray-500 px-0.5 select-none"
               x-text="terminalSidebarOpen ? '<' : '>'"></span>
       </button>
-      <!-- terminal -->
-      <div class="terminal-frame flex-1 min-w-0 overflow-hidden rounded-r lg:h-full"
-           x-ref="terminalOutput"
-           :class="terminalDropActive ? 'ring-2 ring-blue-300' : ''"
-           @dragover.prevent="handleTerminalDragOver($event)"
-           @dragleave="terminalDropActive = false"
-           @drop.prevent="dropTerminalPath($event)"></div>
-    </div>
-    <!-- editor panel -->
-    <div x-show="terminalPanelTab === 'editor'"
-           class="flex flex-col overflow-hidden rounded border border-gray-200 bg-white"
-           :class="terminalZoom ? 'flex-1 min-h-0' : 'min-h-[30rem] lg:h-full'">
-        <div class="flex items-center gap-2 border-b border-gray-200 px-3 py-2 text-xs">
-          <span class="min-w-0 flex-1 truncate font-mono text-gray-600" x-text="editor.path || 'Select a file from the left sidebar'"></span>
-          <span x-show="editor.loading" class="text-gray-400">Loading...</span>
-          <span x-show="editor.saving" class="text-gray-400">Saving...</span>
-          <span x-show="editor.deleting" class="text-gray-400">Deleting...</span>
-          <span x-show="editor.dirty && !editor.saving && !editor.deleting" class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">modified</span>
-          <button @click="deleteEditorFile()"
-                  :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
-                  class="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-40"
-                  x-text="editor.deleting ? 'Deleting...' : 'Delete'"></button>
-          <button @click="saveEditorFile()"
-                  :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
-                  class="rounded border border-blue-200 px-2 py-1 text-blue-600 hover:bg-blue-50 disabled:opacity-40">Save</button>
+      <!-- tab content area -->
+      <div class="flex-1 min-w-0 flex flex-col">
+        <!-- terminal -->
+        <div x-show="terminalPanelTab === 'terminal'" class="terminal-frame flex-1 min-w-0 overflow-hidden rounded-r lg:h-full"
+             x-ref="terminalOutput"
+             :class="terminalDropActive ? 'ring-2 ring-blue-300' : ''"
+             @dragover.prevent="handleTerminalDragOver($event)"
+             @dragleave="terminalDropActive = false"
+             @drop.prevent="dropTerminalPath($event)"></div>
+        <!-- editor -->
+        <div x-show="terminalPanelTab === 'editor'"
+               class="flex flex-1 min-h-0 flex-col overflow-hidden rounded-r border border-gray-200 bg-white">
+            <div class="flex items-center gap-2 border-b border-gray-200 px-3 py-2 text-xs">
+              <span class="min-w-0 flex-1 truncate font-mono text-gray-600" x-text="editor.path || 'Select a file from the left sidebar'"></span>
+              <span x-show="editor.loading" class="text-gray-400">Loading...</span>
+              <span x-show="editor.saving" class="text-gray-400">Saving...</span>
+              <span x-show="editor.deleting" class="text-gray-400">Deleting...</span>
+              <span x-show="editor.dirty && !editor.saving && !editor.deleting" class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">modified</span>
+              <button @click="deleteEditorFile()"
+                      :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
+                      class="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-40"
+                      x-text="editor.deleting ? 'Deleting...' : 'Delete'"></button>
+              <button @click="saveEditorFile()"
+                      :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
+                      class="rounded border border-blue-200 px-2 py-1 text-blue-600 hover:bg-blue-50 disabled:opacity-40">Save</button>
+            </div>
+            <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
+            <textarea class="min-h-0 flex-1 resize-none border-0 p-3 font-mono text-xs leading-5 text-gray-800 outline-none"
+                      x-model="editor.content"
+                      @input="editor.dirty = true"
+                      @keydown="handleEditorKeydown($event)"
+                      :readonly="editor.loading || editor.saving || editor.deleting"
+                      placeholder="Select a readable text file from the left sidebar"></textarea>
         </div>
-        <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
-        <textarea class="min-h-0 flex-1 resize-none border-0 p-3 font-mono text-xs leading-5 text-gray-800 outline-none"
-                  x-model="editor.content"
-                  @input="editor.dirty = true"
-                  @keydown="handleEditorKeydown($event)"
-                  :readonly="editor.loading || editor.saving || editor.deleting"
-                  placeholder="Select a readable text file from the left sidebar"></textarea>
       </div>
     </div>
   </div>
@@ -1763,9 +1778,7 @@ function superCliTerminal() {
 
     async toggleTerminalZoom() {
       this.terminalZoom = !this.terminalZoom;
-      if (this.terminalZoom) {
-        this.$nextTick(() => this.reconnectTerminal());
-      }
+      this.$nextTick(() => this.reconnectTerminal());
     },
 
     async reconnectTerminal() {
