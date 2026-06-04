@@ -480,7 +480,10 @@ def _http_json(node: NodeConfig, method: str, path: str, payload: Optional[dict]
         raise RuntimeError(f"node {node.id} HTTP {e.code}: {body}") from e
     except Exception as e:
         raise RuntimeError(f"node {node.id} request failed: {e}") from e
-    return json.loads(raw) if raw else {}
+    try:
+        return json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {"ok": False, "error": raw[:500] if raw else "empty response", "node_id": node.id}
 
 
 def _open_agent_request(node: NodeConfig, req: urllib.request.Request, timeout: float) -> Any:
@@ -498,8 +501,8 @@ def agent_get(node: NodeConfig, path: str, timeout_ms: int = 1200) -> dict:
     return _http_json(node, "GET", path, timeout_ms=timeout_ms)
 
 
-def agent_post(node: NodeConfig, path: str, payload: Optional[dict] = None, timeout_ms: int = 5000) -> dict:
-    return _http_json(node, "POST", path, payload=payload, timeout_ms=timeout_ms)
+def agent_post(node: NodeConfig, path: str, payload: Optional[dict] = None, timeout_ms: int = 5000, method: str = "POST") -> dict:
+    return _http_json(node, method, path, payload=payload, timeout_ms=timeout_ms)
 
 
 def agent_delete(node: NodeConfig, path: str, timeout_ms: int = 5000) -> dict:
@@ -779,8 +782,8 @@ def forward(node_id: str, method: str, path: str, payload: Optional[dict] = None
         return {"ok": False, "error": "local forwarding path is not implemented for this action", "node_id": node_id}
     try:
         timeout_ms = 15000 if "/timeline" in path else 5000
-        if method == "POST":
-            return agent_post(node, path, payload=payload, timeout_ms=timeout_ms)
+        if method in ("POST", "PATCH"):
+            return agent_post(node, path, payload=payload, timeout_ms=timeout_ms, method=method)
         if method == "DELETE":
             return agent_delete(node, path, timeout_ms=timeout_ms)
         return agent_get(node, path, timeout_ms=timeout_ms)
