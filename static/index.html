@@ -31,7 +31,7 @@
 <body class="bg-gray-50 text-gray-900 min-h-screen" x-data="superCliTerminal()" x-init="init()" x-cloak>
 
 <!-- ===== Top bar: windows that need attention ===== -->
-<div class="sticky top-0 z-50 bg-slate-900 text-white px-4 py-2 shadow-lg flex items-center gap-3 text-sm"
+<div class="sticky top-0 z-50 bg-slate-900 text-white px-4 shadow-lg flex items-center gap-3 text-sm h-9"
      x-show="attentionWindows.length > 0 || terminalZoom" x-transition>
   <span class="font-bold shrink-0">ATTENTION (<span x-text="attentionWindows.length"></span>)</span>
   <div class="flex gap-2 overflow-x-auto">
@@ -544,7 +544,7 @@
         <button @click="completeTerminalWindow()"
                 x-show="terminalWindow?.triage !== 'completed'"
                 class="text-xs border border-blue-300 text-blue-600 px-2 py-1 rounded hover:bg-blue-50">Complete</button>
-        <button @click="terminalZoom = !terminalZoom"
+        <button @click="toggleTerminalZoom()"
                 class="text-xs border px-2 py-1 rounded"
                 :class="terminalZoom ? 'border-purple-400 text-purple-700 bg-purple-50' : 'border-purple-300 text-purple-600 hover:bg-purple-50'"
                 x-text="terminalZoom ? 'Unzoom' : 'Zoom'"></button>
@@ -1758,6 +1758,13 @@ function superCliTerminal() {
       if (this.terminalWindow) {
         const key = this.windowKey(this.terminalWindow);
         this.terminalWindow = this.windows.find(item => this.windowKey(item) === key) || this.terminalWindow;
+      }
+    },
+
+    async toggleTerminalZoom() {
+      this.terminalZoom = !this.terminalZoom;
+      if (this.terminalZoom) {
+        this.$nextTick(() => this.reconnectTerminal());
       }
     },
 
