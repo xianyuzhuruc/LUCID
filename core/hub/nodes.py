@@ -680,15 +680,16 @@ def _is_legacy_bash_window(item: dict) -> bool:
     return str(item.get("current_task") or "").strip() == "bash -l"
 
 
-def aggregate_history(q: str = "", page: int = 1, limit: int = 30) -> dict:
+def aggregate_history(q: str = "", page: int = 1, limit: int = 30, node_id: str | None = None) -> dict:
     cfg = load_config()
     ensure_tunnels(cfg)
     rows: list[dict] = []
     errors: list[dict] = []
+    active_nodes = [n for n in cfg.nodes if not node_id or n.id == node_id]
     query = urllib.parse.urlencode({"q": q, "page": 1, "limit": 9999})
-    with ThreadPoolExecutor(max_workers=max(1, len(cfg.nodes))) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, len(active_nodes))) as pool:
         futs = {}
-        for node in cfg.nodes:
+        for node in active_nodes:
             if node.kind == "local":
                 futs[pool.submit(localstate.history_sessions, q or None, 1, 9999, node.id)] = node
             else:

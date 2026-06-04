@@ -630,7 +630,7 @@
                  @change="uploadTerminalFile($event)">
         </div>
         <!-- file browser -->
-        <div x-show="sidebarView === 'files'" class="flex flex-col flex-1 min-h-0">
+        <div x-show="!terminalZoom || sidebarView === 'files'" class="flex flex-col flex-1 min-h-0">
         <div class="border-b border-gray-200 px-2 py-2">
           <input class="w-full rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-slate-400 focus:outline-none"
                  placeholder="Path"
@@ -686,7 +686,7 @@
         </div>
         </div> <!-- end file browser -->
         <!-- terminal browser -->
-        <div x-show="sidebarView === 'terminals'" class="flex-1 min-h-0 overflow-y-auto bg-white">
+        <div x-show="terminalZoom && sidebarView === 'terminals'" class="flex-1 min-h-0 overflow-y-auto bg-white">
           <div x-show="!windows.length" class="px-3 py-4 text-xs text-gray-400">No terminals</div>
           <template x-for="w in sortedTerminals" :key="windowKey(w)">
             <button @click="openTerminal(w)"
@@ -700,7 +700,7 @@
         </div>
       </aside>
       <!-- gutter toggle -->
-      <button @click="terminalSidebarOpen = !terminalSidebarOpen"
+      <button @click="toggleTerminalSidebar()"
               class="shrink-0 flex items-center bg-gray-100 hover:bg-gray-200 transition cursor-pointer border-0 p-0"
               :title="terminalSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'">
         <span class="text-[10px] text-gray-500 px-0.5 select-none"
@@ -915,6 +915,14 @@
     <div class="px-5 py-3 border-b flex items-center justify-between">
       <h2 class="font-semibold text-sm">History (<span x-text="historyTotal"></span>)</h2>
       <div class="flex items-center gap-2">
+        <button @click="showHistory = true; loadHistory(1)"
+                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Refresh</button>
+        <select x-model="historyNode" @change="showHistory = true; loadHistory(1)" class="border rounded px-1 py-1 text-xs bg-white">
+          <option value="">All nodes</option>
+          <template x-for="n in nodes" :key="n.id">
+            <option :value="n.id" x-text="n.name || n.id"></option>
+          </template>
+        </select>
         <input type="text" placeholder="Search history..." x-model="historyQuery"
                @keydown.enter="showHistory = true; loadHistory(1)"
                class="border rounded px-2 py-1 text-xs w-48 focus:outline-none focus:ring-1 focus:ring-blue-400">
@@ -1028,6 +1036,7 @@ function superCliTerminal() {
     historyPage: 1,
     historyLimit: 20,
     historyQuery: '',
+    historyNode: '',
     showHistory: false,
     reviewStatuses: {},
     reviewVerdicts: {},
@@ -1044,6 +1053,7 @@ function superCliTerminal() {
     enablingLocal: false,
     terminalWindow: null,
     terminalZoom: false,
+    zoomStartedAt: null,
     terminalSidebarOpen: true,
     sidebarView: 'files',
     terminal: null,
@@ -1133,7 +1143,16 @@ function superCliTerminal() {
     launchNewDirError: '',
 
     get attentionWindows() {
-      return this.windows.filter(w => !this.isBashWindow(w) && this.attentionState(w) !== 'working' && w.triage !== 'completed');
+      return this.windows.filter(w => {
+        if (this.isBashWindow(w)) return false;
+        if (this.attentionState(w) === 'working') return false;
+        if (w.triage === 'completed') return false;
+        // Exclude the zoomed-in terminal for the first 120 seconds
+        if (this.terminalZoom && this.zoomStartedAt && this.terminalWindow
+            && this.windowKey(w) === this.windowKey(this.terminalWindow)
+            && (Date.now() - this.zoomStartedAt) < 120000) return false;
+        return true;
+      });
     },
     get waitingWindows() {
       return this.attentionWindows;
@@ -1424,6 +1443,7 @@ function superCliTerminal() {
     async openTerminal(w) {
       this.closeTerminalSession();
       this.terminalWindow = w;
+      if (this.terminalZoom) this.zoomStartedAt = Date.now();
       this.terminalPanelTab = 'terminal';
       this.terminalSidebarOpen = true;
       this.resetEditor();
@@ -1760,6 +1780,7 @@ function superCliTerminal() {
       this.closeTerminalSession();
       this.terminalWindow = null;
       this.terminalZoom = false;
+      this.zoomStartedAt = null;
       this.sidebarView = 'files';
       this.terminalPanelTab = 'terminal';
       this.resetEditor();
@@ -1814,8 +1835,14 @@ function superCliTerminal() {
       }
     },
 
+    async toggleTerminalSidebar() {
+      this.terminalSidebarOpen = !this.terminalSidebarOpen;
+      this.$nextTick(() => this.reconnectTerminal());
+    },
+
     async toggleTerminalZoom() {
       this.terminalZoom = !this.terminalZoom;
+      this.zoomStartedAt = this.terminalZoom ? Date.now() : null;
       this.$nextTick(() => this.reconnectTerminal());
     },
 
@@ -2232,7 +2259,8 @@ function superCliTerminal() {
     async loadHistory(page) {
       if (page < 1) return;
       const q = this.historyQuery ? `&q=${encodeURIComponent(this.historyQuery)}` : '';
-      const r = await fetch(`/api/history?page=${page}&limit=${this.historyLimit}${q}`);
+      const nid = this.historyNode ? `&node_id=${encodeURIComponent(this.historyNode)}` : '';
+      const r = await fetch(`/api/history?page=${page}&limit=${this.historyLimit}${q}${nid}`);
       const d = await r.json();
       this.historySessions = d.sessions || [];
       this.historyTotal = d.total || 0;

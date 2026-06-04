@@ -1973,9 +1973,9 @@ def api_review_result(pid: int) -> dict:
 
 
 @app.get("/api/history")
-def api_history(q: str = "", page: int = 1, limit: int = 30) -> dict:
+def api_history(q: str = "", page: int = 1, limit: int = 30, node_id: str | None = None) -> dict:
     if _is_hub_mode():
-        return nodes.aggregate_history(q=q, page=page, limit=limit)
+        return nodes.aggregate_history(q=q, page=page, limit=limit, node_id=node_id)
     return history.list_sessions(q=q or None, page=page, limit=limit)
 
 
