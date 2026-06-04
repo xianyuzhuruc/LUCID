@@ -1367,7 +1367,6 @@ def _deploy_request_from_node(node: nodes.NodeConfig) -> DeployRequest:
         remote_dir=node.remote_dir,
         node_name=node.name,
         python_command="auto",
-        remember_password=True,
     )
 
 
@@ -1504,7 +1503,7 @@ def api_node_deploy_sync_all() -> dict:
             continue
         try:
             req = _deploy_request_from_node(node)
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
             skipped.append({"id": node.id or "", "reason": str(e)})
             continue
         job = _start_deploy_job(req)
