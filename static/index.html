@@ -229,20 +229,20 @@
       <div class="flex items-center gap-2">
         <button @click="syncAllNodes()"
                 :disabled="syncingNodes || !nodes.some(n => n.kind === 'ssh')"
-                class="text-xs border border-blue-300 text-blue-700 px-3 py-1 rounded hover:bg-blue-50 disabled:opacity-50">
+                class="text-xs border border-blue-300 bg-white dark:bg-gray-700 text-blue-700 dark:text-blue-400 px-3 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-50">
           <span x-text="syncingNodes ? 'Syncing...' : 'Sync all nodes'"></span>
         </button>
         <button x-show="!localEnabled"
                 @click="enableLocalNode()"
                 :disabled="enablingLocal"
-                class="text-xs border border-amber-300 text-amber-700 px-3 py-1 rounded hover:bg-amber-50 disabled:opacity-50">
+                class="text-xs border border-amber-300 bg-white dark:bg-gray-700 text-amber-700 dark:text-amber-400 px-3 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/30 disabled:opacity-50">
           <span x-text="enablingLocal ? 'Installing...' : 'Enable local'"></span>
         </button>
         <button @click="showNodes = false" class="text-gray-400 hover:text-gray-700">&times;</button>
       </div>
     </div>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div class="lg:col-span-1 border rounded p-3">
+      <div class="lg:col-span-1 border dark:border-gray-700 rounded p-3">
         <h3 class="text-xs font-semibold mb-2">SSH deploy</h3>
         <div x-show="sshHistory.length" class="mb-2 space-y-1">
           <div class="flex items-center justify-between text-[11px] text-gray-500">
@@ -277,7 +277,7 @@
           <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="remote dir" x-model="deployForm.remote_dir">
         </div>
         <button @click="deployNode()"
-                class="mt-3 text-xs border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-50 disabled:opacity-50"
+                class="mt-3 text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-3 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
                 :disabled="deploying">
           <span x-text="deploying ? 'Deploying...' : 'Deploy / update agent'"></span>
         </button>
@@ -304,13 +304,13 @@
           </div>
         </div>
       </div>
-      <div class="lg:col-span-1 space-y-2 border rounded p-3">
+      <div class="lg:col-span-1 space-y-2 border dark:border-gray-700 rounded p-3">
         <div x-show="nodes.length === 0" class="border border-dashed dark:border-gray-600 rounded p-4 text-xs text-gray-400 dark:text-gray-500">
           No nodes configured
         </div>
         <div class="max-h-64 overflow-y-auto space-y-2" x-show="nodes.length > 0">
         <template x-for="n in nodes" :key="n.id">
-          <div class="border rounded p-2 text-xs cursor-pointer hover:border-blue-300 hover:shadow-sm transition"
+          <div class="border dark:border-gray-600 rounded p-2 text-xs cursor-pointer hover:border-blue-300 hover:shadow-sm transition"
                :class="launchForm.node_id === n.id ? 'ring-2 ring-inset ring-blue-400' : ''"
                @click="launchForm.node_id = n.id">
             <div class="flex items-center justify-between gap-2">
@@ -334,12 +334,12 @@
               <div class="ml-auto flex gap-1.5">
               <button @click="removeNode(n)"
                       :disabled="removingNodeId === n.id || deletingNodeId === n.id"
-                      class="shrink-0 rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-100 disabled:opacity-40"
+                      class="shrink-0 rounded border border-red-300 bg-red-50 dark:bg-gray-700 px-2 py-0.5 text-[10px] text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40"
                       x-text="removingNodeId === n.id ? 'Removing...' : 'Remove'"
                       x-show="n.kind === 'ssh'"></button>
               <button @click="deleteNode(n)"
                       :disabled="deletingNodeId === n.id || removingNodeId === n.id"
-                      class="shrink-0 rounded border border-red-200 px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 disabled:opacity-40"
+                      class="shrink-0 rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-0.5 text-[10px] text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
                       x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"></button>
               </div>
             </div>
@@ -371,7 +371,7 @@
           </div>
         </div>
       </div>
-      <div class="lg:col-span-1 border rounded p-3">
+      <div class="lg:col-span-1 border dark:border-gray-700 rounded p-3">
         <h3 class="text-xs font-semibold mb-2">Launch managed process</h3>
         <div class="grid grid-cols-2 gap-2 text-xs">
           <select class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" x-model="launchForm.node_id" @change="handleLaunchNodeChange()" :disabled="nodes.length === 0">
@@ -388,7 +388,7 @@
             <input class="border dark:border-gray-600 rounded px-2 py-1 flex-1 min-w-0 dark:bg-gray-700 dark:text-gray-200" placeholder="working directory (blank = home)"
                    x-model="launchForm.cwd" @keydown.enter.prevent="openPathBrowser()">
             <button @click="togglePathBrowser()"
-                    class="border border-slate-300 dark:border-gray-600 text-slate-700 dark:text-gray-300 rounded px-2 py-1 hover:bg-slate-50 dark:hover:bg-gray-700"
+                    class="border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-slate-700 dark:text-gray-300 rounded px-2 py-1 hover:bg-slate-50 dark:hover:bg-gray-600"
                     x-text="pathBrowser.open ? 'Hide' : 'Browse'"></button>
           </div>
           <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200"
@@ -461,12 +461,12 @@
         <div class="mt-3 flex flex-wrap gap-2">
           <button @click="launchManaged()"
                   :disabled="!launchForm.node_id"
-                  class="text-xs border border-green-300 text-green-700 px-3 py-1 rounded hover:bg-green-50 disabled:opacity-50">
+                  class="text-xs border border-green-300 bg-white dark:bg-gray-700 text-green-700 dark:text-green-400 px-3 py-1 rounded hover:bg-green-50 dark:hover:bg-green-900/30 disabled:opacity-50">
             Launch in tmux
           </button>
           <button @click="launchNewBash()"
                   :disabled="!launchForm.node_id"
-                  class="text-xs border border-orange-300 text-orange-700 px-3 py-1 rounded hover:bg-orange-50 disabled:opacity-50">
+                  class="text-xs border border-orange-300 bg-white dark:bg-gray-700 text-orange-700 dark:text-orange-400 px-3 py-1 rounded hover:bg-orange-50 dark:hover:bg-orange-900/30 disabled:opacity-50">
             New bash
           </button>
         </div>
@@ -664,7 +664,6 @@
               <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
             </div>
           </template>
-          <span class="text-[11px] text-gray-400 dark:text-gray-500" x-show="terminalPanelTab === 'editor'" x-text="editor.path || 'No file selected'"></span>
         </div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
@@ -712,7 +711,6 @@
           <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
         </div>
       </template>
-      <span class="min-w-0 flex-1 truncate px-2 text-[11px] text-gray-400 dark:text-gray-500" x-text="terminalPanelTab === 'editor' ? (editor.path || 'No file selected') : ''"></span>
     </div>
     <!-- sidebar + content area -->
     <div class="flex gap-0"
