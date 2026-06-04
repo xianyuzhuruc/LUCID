@@ -26,6 +26,89 @@
   .terminal-frame .xterm-viewport { background-color: #020617 !important; }
   .toast-enter { animation: slideIn .3s ease-out; }
   @keyframes slideIn { from{transform:translateY(1rem);opacity:0} to{transform:translateY(0);opacity:1} }
+
+  /* === Editor syntax highlight overlay sync === */
+  .editor-highlight-layer,
+  .editor-textarea-layer {
+    tab-size: 4;
+    -moz-tab-size: 4;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+  .editor-highlight-layer {
+    word-break: normal;
+    pointer-events: none;
+  }
+  .editor-textarea-layer {
+    word-break: normal;
+  }
+  .editor-textarea-layer::placeholder {
+    color: #9ca3af;
+  }
+  .dark .editor-textarea-layer::placeholder {
+    color: #6b7280;
+  }
+
+  /* === Syntax Highlighting Colors === */
+  :root {
+    --syn-comment: #6b7280;
+    --syn-keyword: #7c3aed;
+    --syn-string: #059669;
+    --syn-number: #d97706;
+    --syn-function: #2563eb;
+    --syn-type: #0891b2;
+    --syn-builtin: #0891b2;
+    --syn-boolean: #7c3aed;
+    --syn-decorator: #ca8a04;
+    --syn-heading: #7c3aed;
+    --syn-preprocessor: #ca8a04;
+    --syn-variable: #ea580c;
+    --syn-operator: #dc2626;
+    --syn-regex: #059669;
+    --syn-tag: #2563eb;
+    --syn-attr: #d97706;
+    --syn-section: #7c3aed;
+  }
+
+  .dark {
+    --syn-comment: #6b7280;
+    --syn-keyword: #c084fc;
+    --syn-string: #34d399;
+    --syn-number: #fbbf24;
+    --syn-function: #60a5fa;
+    --syn-type: #22d3ee;
+    --syn-builtin: #22d3ee;
+    --syn-boolean: #c084fc;
+    --syn-decorator: #facc15;
+    --syn-heading: #c084fc;
+    --syn-preprocessor: #facc15;
+    --syn-variable: #fb923c;
+    --syn-operator: #f87171;
+    --syn-regex: #34d399;
+    --syn-tag: #60a5fa;
+    --syn-attr: #fbbf24;
+    --syn-section: #c084fc;
+  }
+
+  .syn-comment  { color: var(--syn-comment); font-style: italic; }
+  .syn-keyword  { color: var(--syn-keyword); font-weight: 600; }
+  .syn-string   { color: var(--syn-string); }
+  .syn-number   { color: var(--syn-number); }
+  .syn-function { color: var(--syn-function); }
+  .syn-type     { color: var(--syn-type); }
+  .syn-builtin  { color: var(--syn-builtin); }
+  .syn-boolean  { color: var(--syn-boolean); font-weight: 600; }
+  .syn-decorator { color: var(--syn-decorator); }
+  .syn-heading  { color: var(--syn-heading); font-weight: 700; }
+  .syn-preprocessor { color: var(--syn-preprocessor); font-weight: 600; }
+  .syn-variable { color: var(--syn-variable); }
+  .syn-operator { color: var(--syn-operator); }
+  .syn-regex    { color: var(--syn-regex); }
+  .syn-tag      { color: var(--syn-tag); }
+  .syn-attr     { color: var(--syn-attr); }
+  .syn-section  { color: var(--syn-section); font-weight: 600; }
+  .syn-bold     { font-weight: 700; }
+  .syn-italic   { font-style: italic; }
 </style>
 </head>
 
@@ -124,6 +207,11 @@
                   :class="theme === 'dark' ? 'border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900 dark:text-blue-300 dark:border-blue-500' : 'border-gray-200 text-gray-600 dark:border-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'">
             🌙 Dark</button>
         </div>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-sm dark:text-gray-200">Syntax Theme</span>
+        <span class="text-xs border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 px-2 py-1 rounded"
+              x-text="syntaxTheme"></span>
       </div>
     </div>
   </div>
@@ -558,36 +646,36 @@
           <span class="text-gray-300 mx-1 select-none">|</span>
           <button @click="setTerminalTab('terminal')"
                   class="text-xs border px-2 py-1 rounded"
-                  :class="terminalPanelTab === 'terminal' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'">
+                  :class="terminalPanelTab === 'terminal' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
             Terminal</button>
           <button @click="setTerminalTab('editor')"
                   class="text-xs border px-2 py-1 rounded"
-                  :class="terminalPanelTab === 'editor' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'">
+                  :class="terminalPanelTab === 'editor' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
             Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
           <span class="text-[11px] text-gray-400" x-show="terminalPanelTab === 'editor'" x-text="editor.path || 'No file selected'"></span>
         </div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <button @click="sendTerminalKey('Enter')"
-                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Enter</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700">Enter</button>
         <button @click="copyTerminalSelection()"
-                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Copy</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700">Copy</button>
         <button @click="pasteTerminalClipboard()"
-                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Paste</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700">Paste</button>
         <button @click="terminateTerminalWindow()"
-                class="text-xs border border-red-300 text-red-700 px-2 py-1 rounded hover:bg-red-50">Terminate</button>
+                class="text-xs border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/40 dark:bg-red-900/20">Terminate</button>
         <button @click="sendTerminalKey('C-c')"
-                class="text-xs border border-red-200 text-red-600 px-2 py-1 rounded hover:bg-red-50">Ctrl-C</button>
+                class="text-xs border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/40 dark:bg-red-900/20">Ctrl-C</button>
         <button @click="completeTerminalWindow()"
                 x-show="terminalWindow?.triage !== 'completed'"
-                class="text-xs border border-blue-300 text-blue-600 px-2 py-1 rounded hover:bg-blue-50">Complete</button>
+                class="text-xs border border-blue-300 dark:border-blue-800 text-blue-600 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/40 dark:bg-blue-900/20">Complete</button>
         <button @click="toggleTerminalZoom()"
                 class="text-xs border px-2 py-1 rounded"
-                :class="terminalZoom ? 'border-purple-400 text-purple-700 bg-purple-50' : 'border-purple-300 text-purple-600 hover:bg-purple-50'"
+                :class="terminalZoom ? 'border-purple-400 dark:border-purple-600 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/40' : 'border-purple-300 dark:border-purple-700 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/40 dark:bg-purple-900/20'"
                 x-text="terminalZoom ? 'Unzoom' : 'Zoom'"></button>
         <button @click="reconnectTerminal()"
                 class="text-xs border px-2 py-1 rounded"
-                :class="terminalWindow?.triage === 'completed' ? 'border-green-300 text-green-600 hover:bg-green-50' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'"
+                :class="terminalWindow?.triage === 'completed' ? 'border-green-300 dark:border-green-800 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/40 dark:bg-green-900/20' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'"
                 x-text="terminalWindow?.triage === 'completed' ? 'Start' : 'Reconnect'"></button>
         <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
       </div>
@@ -755,12 +843,25 @@
                       class="rounded border border-blue-200 px-2 py-1 text-blue-600 hover:bg-blue-50 disabled:opacity-40">Save</button>
             </div>
             <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
-            <textarea class="min-h-0 flex-1 resize-none border-0 p-3 font-mono text-xs leading-5 text-gray-800 dark:text-gray-200 dark:bg-gray-800 outline-none"
-                      x-model="editor.content"
-                      @input="editor.dirty = true"
-                      @keydown="handleEditorKeydown($event)"
-                      :readonly="editor.loading || editor.saving || editor.deleting"
-                      placeholder="Select a readable text file from the left sidebar"></textarea>
+            <div class="relative flex-1 min-h-0 bg-white dark:bg-gray-800" x-ref="editorViewport">
+              <!-- Syntax highlight overlay (behind) -->
+              <pre class="editor-highlight-layer absolute inset-0 overflow-auto p-3 font-mono text-xs leading-5"
+                   aria-hidden="true"><code x-ref="editorHighlight" class="block min-h-full"></code></pre>
+              <!-- Transparent textarea (on top) -->
+              <textarea class="editor-textarea-layer relative w-full h-full resize-none border-0 p-3 font-mono text-xs leading-5 outline-none bg-transparent"
+                        :class="editor.content ? 'text-transparent caret-gray-800 dark:caret-gray-200' : 'text-gray-800 dark:text-gray-200 caret-gray-800 dark:caret-gray-200'"
+                        x-model="editor.content"
+                        @input="editor.dirty = true; scheduleHighlight()"
+                        @scroll="syncEditorScroll()"
+                        @keydown="handleEditorKeydown($event)"
+                        :readonly="editor.loading || editor.saving || editor.deleting"
+                        placeholder="Select a readable text file from the left sidebar"
+                        x-ref="editorTextarea"
+                        spellcheck="false"
+                        autocomplete="off"
+                        autocorrect="off"
+                        autocapitalize="off"></textarea>
+            </div>
         </div>
       </div>
     </div>
@@ -1037,6 +1138,183 @@
 
 <script>
 function superCliTerminal() {
+  const SYNTAX_DEFS = {
+    md: { patterns: [
+      { regex: /```[\s\S]*?```/, cls: 'syn-string' },
+      { regex: /`[^`\n]+`/, cls: 'syn-string' },
+      { regex: /^#{1,6}\s.*$/, cls: 'syn-heading' },
+      { regex: /\*\*(?:[^*]|\*(?!\*))+\*\*/, cls: 'syn-bold' },
+      { regex: /__(?:[^_]|_(?!_))+__/, cls: 'syn-bold' },
+      { regex: /\*(?:[^*]|\*(?!\*))+\*/, cls: 'syn-italic' },
+      { regex: /_(?:[^_]|_(?!_))+_/, cls: 'syn-italic' },
+      { regex: /\[(?:[^\]]*)\]\((?:[^)]*)\)/, cls: 'syn-tag' },
+      { regex: /^>\s.*$/, cls: 'syn-comment' },
+      { regex: /^---$/, cls: 'syn-comment' },
+    ]},
+    py: { patterns: [
+      { regex: /#.*$/, cls: 'syn-comment' },
+      { regex: /(?:'''[\s\S]*?'''|"""(?:\\.|[\s\S])*?""")/, cls: 'syn-string' },
+      { regex: /(?:f|r|u|b)?'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /(?:f|r|u|b)?"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /@\w+/, cls: 'syn-decorator' },
+      { regex: /\b(?:def|class|return|if|elif|else|for|while|import|from|as|try|except|finally|raise|with|yield|lambda|pass|break|continue|and|or|not|in|is|assert|del|global|nonlocal|async|await)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:True|False|None)\b/, cls: 'syn-boolean' },
+      { regex: /\b(?:print|len|range|int|str|float|list|dict|set|tuple|bool|type|isinstance|hasattr|getattr|setattr|super|enumerate|zip|map|filter|sorted|reversed|open|input|max|min|sum|abs|round|any|all|chr|ord|dir|id|hex|oct|bin|repr|eval|exec|compile|format|next|iter|help|vars|locals|globals|object|classmethod|staticmethod|property|Exception|ValueError|TypeError|KeyError|IndexError|AttributeError|RuntimeError|OSError|IOError|FileNotFoundError|ImportError|StopIteration|NotImplementedError)\b/, cls: 'syn-builtin' },
+      { regex: /\b(?:self)\b/, cls: 'syn-variable' },
+      { regex: /(?:(?<=def\s)|\b)([a-zA-Z_]\w*)(?=\s*\()/, cls: 'syn-function' },
+      { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?\b/, cls: 'syn-number' },
+    ]},
+    sh: { patterns: [
+      { regex: /#.*$/, cls: 'syn-comment' },
+      { regex: /^#!.*$/, cls: 'syn-preprocessor' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /\$\{[^}]+\}/, cls: 'syn-variable' },
+      { regex: /\$\w+/, cls: 'syn-variable' },
+      { regex: /\$[?@!#*\-0-9]/, cls: 'syn-variable' },
+      { regex: /\$\([^)]*\)/, cls: 'syn-builtin' },
+      { regex: /\b(?:if|then|else|elif|fi|for|while|do|done|case|esac|function|return|exit|export|source|local|declare|unset|readonly|shift|break|continue|trap|eval|exec)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:echo|cd|pwd|ls|cat|grep|sed|awk|curl|wget|mkdir|rm|cp|mv|chmod|chown|ln|tar|gzip|ssh|scp|rsync|git|docker|sudo|ps|kill|env|set|alias|unalias|type|which|true|false|test|printf|read)\b/, cls: 'syn-builtin' },
+    ]},
+    c: { patterns: [
+      { regex: /\/\/.*$/, cls: 'syn-comment' },
+      { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
+      { regex: /^#\s*(?:include|define|ifdef|ifndef|if|else|elif|endif|pragma|error|warning|undef|line)\b.*$/, cls: 'syn-preprocessor' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /\b(?:int|float|double|char|void|bool|short|long|unsigned|signed|size_t|ssize_t|uint8_t|uint16_t|uint32_t|uint64_t|int8_t|int16_t|int32_t|int64_t)\b/, cls: 'syn-type' },
+      { regex: /\b(?:auto|const|static|extern|volatile|register|typedef|struct|enum|union|sizeof|return|if|else|for|while|do|switch|case|break|continue|goto|default|inline|restrict)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:NULL|true|false|True|False|nullptr)\b/, cls: 'syn-boolean' },
+      { regex: /\b(?:#include|#define|#ifdef|#ifndef|#endif|#pragma)\b/, cls: 'syn-preprocessor' },
+      { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[uUlLfF]*)\b/, cls: 'syn-number' },
+    ]},
+    cpp: { patterns: [
+      { regex: /\/\/.*$/, cls: 'syn-comment' },
+      { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
+      { regex: /^#\s*(?:include|define|ifdef|ifndef|if|else|elif|endif|pragma|error|warning|undef|line)\b.*$/, cls: 'syn-preprocessor' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /(?:^|\s)(?:template|typename|class|namespace|using|public|private|protected|virtual|override|final|explicit|constexpr|noexcept|mutable|new|delete|this|operator|friend|inline)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:int|float|double|char|void|bool|short|long|unsigned|signed|size_t|ssize_t|uint8_t|uint16_t|uint32_t|uint64_t|int8_t|int16_t|int32_t|int64_t|string|vector|map|set|shared_ptr|unique_ptr)\b/, cls: 'syn-type' },
+      { regex: /\b(?:auto|const|static|extern|volatile|register|typedef|struct|enum|union|sizeof|return|if|else|for|while|do|switch|case|break|continue|goto|default|inline|restrict|catch|throw|try)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:NULL|true|false|nullptr|True|False)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[uUlLfF]*)\b/, cls: 'syn-number' },
+    ]},
+    h: { patterns: [
+      { regex: /\/\/.*$/, cls: 'syn-comment' },
+      { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
+      { regex: /^#\s*(?:include|define|ifdef|ifndef|if|else|elif|endif|pragma|error|warning|undef|line)\b.*$/, cls: 'syn-preprocessor' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /\b(?:int|float|double|char|void|bool|short|long|unsigned|signed|size_t|ssize_t|uint8_t|uint16_t|uint32_t|uint64_t|int8_t|int16_t|int32_t|int64_t)\b/, cls: 'syn-type' },
+      { regex: /\b(?:auto|const|static|extern|volatile|register|typedef|struct|enum|union|sizeof|return|if|else|for|while|do|switch|case|break|continue|goto|default|inline|restrict)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:NULL|true|false|nullptr|True|False)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[uUlLfF]*)\b/, cls: 'syn-number' },
+    ]},
+    hpp: { patterns: [
+      { regex: /\/\/.*$/, cls: 'syn-comment' },
+      { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
+      { regex: /^#\s*(?:include|define|ifdef|ifndef|if|else|elif|endif|pragma|error|warning|undef|line)\b.*$/, cls: 'syn-preprocessor' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /(?:^|\s)(?:template|typename|class|namespace|using|public|private|protected|virtual|override|final|explicit|constexpr|noexcept|mutable|new|delete|this|operator|friend|inline)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:int|float|double|char|void|bool|short|long|unsigned|signed|size_t|ssize_t|uint8_t|uint16_t|uint32_t|uint64_t|int8_t|int16_t|int32_t|int64_t|string|vector|map|set|shared_ptr|unique_ptr)\b/, cls: 'syn-type' },
+      { regex: /\b(?:auto|const|static|extern|volatile|register|typedef|struct|enum|union|sizeof|return|if|else|for|while|do|switch|case|break|continue|goto|default|inline|restrict|catch|throw|try)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:NULL|true|false|nullptr|True|False)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[uUlLfF]*)\b/, cls: 'syn-number' },
+    ]},
+    sql: { flags: 'i', patterns: [
+      { regex: /--.*$/, cls: 'syn-comment' },
+      { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
+      { regex: /'(?:[^']|'')*'/, cls: 'syn-string' },
+      { regex: /"(?:[^"]|"")*"/, cls: 'syn-string' },
+      { regex: /\b(?:SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|INDEX|VIEW|DROP|ALTER|ADD|COLUMN|CONSTRAINT|PRIMARY|KEY|FOREIGN|REFERENCES|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|FULL|ON|AND|OR|NOT|NULL|IS|LIKE|IN|BETWEEN|EXISTS|UNION|ALL|DISTINCT|AS|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|ASC|DESC|CASE|WHEN|THEN|ELSE|END|BEGIN|COMMIT|ROLLBACK|TRANSACTION|GRANT|REVOKE|TRUNCATE|REPLACE|MERGE|EXCEPT|INTERSECT|WITH|RECURSIVE|OVER|PARTITION|WINDOW|ROWS|RANGE|UNBOUNDED|PRECEDING|FOLLOWING|CURRENT|ROW|IF|TEMPORARY|TEMP|DATABASE|SCHEMA|DEFAULT|CHECK|UNIQUE|CASCADE|RESTRICT|TRIGGER|FUNCTION|PROCEDURE|RETURNS|LANGUAGE|IMMUTABLE|STABLE|VOLATILE|EXECUTE|CALL|EXPLAIN|ANALYZE|VACUUM)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:COUNT|SUM|AVG|MIN|MAX|COALESCE|NULLIF|CAST|CONVERT|SUBSTR|SUBSTRING|LENGTH|TRIM|UPPER|LOWER|REPLACE|CONCAT|NOW|CURRENT_DATE|CURRENT_TIMESTAMP|DATE|TIME|EXTRACT|YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|ABS|ROUND|CEIL|CEILING|FLOOR|MOD|POWER|SQRT|RANK|DENSE_RANK|ROW_NUMBER|LEAD|LAG|FIRST_VALUE|LAST_VALUE|NTH_VALUE|NTILE)\b/, cls: 'syn-builtin' },
+      { regex: /\b(?:TRUE|FALSE|NULL)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d+\.?\d*\b/, cls: 'syn-number' },
+    ]},
+    js: { patterns: [
+      { regex: /\/\/.*$/, cls: 'syn-comment' },
+      { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
+      { regex: /`(?:\\.|\$\{[^}]*\}|[^`\\])*`/, cls: 'syn-string' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /\/(?:[^\/\\\n]|\\.)+\/[gimsuy]*/, cls: 'syn-regex' },
+      { regex: /\b(?:const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|try|catch|finally|throw|new|delete|typeof|instanceof|in|of|class|extends|super|import|export|default|from|as|async|await|yield|static|get|set)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:console|Math|JSON|Promise|Array|Object|String|Number|Boolean|Date|RegExp|Error|Map|Set|WeakMap|WeakSet|Symbol|Proxy|Reflect|parseInt|parseFloat|isNaN|isFinite|decodeURI|encodeURI|setTimeout|setInterval|clearTimeout|clearInterval|require|module|process|Buffer|global|window|document|fetch|alert|confirm)\b/, cls: 'syn-builtin' },
+      { regex: /\b(?:true|false|null|undefined|NaN|Infinity)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?\b/, cls: 'syn-number' },
+    ]},
+    ts: { patterns: [
+      { regex: /\/\/.*$/, cls: 'syn-comment' },
+      { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
+      { regex: /`(?:\\.|\$\{[^}]*\}|[^`\\])*`/, cls: 'syn-string' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /\/(?:[^\/\\\n]|\\.)+\/[gimsuy]*/, cls: 'syn-regex' },
+      { regex: /\b(?:const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|try|catch|finally|throw|new|delete|typeof|instanceof|in|of|class|extends|super|import|export|default|from|as|async|await|yield|static|get|set|interface|type|enum|implements|abstract|readonly|namespace|module|declare|keyof|infer|is|asserts|unknown|never|void|any)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:string|number|boolean|Array|Object|Record|Partial|Required|Pick|Omit|Exclude|Extract|NonNullable|ReturnType|Parameters|ConstructorParameters|InstanceType)\b/, cls: 'syn-type' },
+      { regex: /\b(?:console|Math|JSON|Promise|Array|Object|String|Number|Boolean|Date|RegExp|Error|Map|Set|WeakMap|WeakSet|Symbol)\b/, cls: 'syn-builtin' },
+      { regex: /\b(?:true|false|null|undefined|NaN|Infinity)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?\b/, cls: 'syn-number' },
+    ]},
+    json: { patterns: [
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /\b(?:true|false|null)\b/, cls: 'syn-boolean' },
+      { regex: /-?\b\d+\.?\d*(?:[eE][+-]?\d+)?\b/, cls: 'syn-number' },
+    ]},
+    css: { patterns: [
+      { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
+      { regex: /@(?:media|import|keyframes|font-face|supports|layer|container|page|charset|namespace)\b/, cls: 'syn-preprocessor' },
+      { regex: /[.#][\w-]+(?:\s*[,{])/, cls: 'syn-tag' },
+      { regex: /:(?:hover|focus|active|visited|first-child|last-child|nth-child|not|is|where|has|before|after|first-letter|first-line|selection|placeholder|disabled|checked|enabled|required|optional|valid|invalid|root|empty|target|lang|link|only-child|only-of-type|first-of-type|last-of-type|nth-of-type|nth-last-child|nth-last-of-type|read-only|read-write|focus-within|focus-visible|autofill|default|dir|fullscreen|indeterminate|in-range|out-of-range|scope|user-invalid)\b/, cls: 'syn-builtin' },
+      { regex: /(?<=:\s*)(?:#[0-9a-fA-F]{3,8}|rgb\([^)]*\)|hsl\([^)]*\)|var\([^)]*\)|url\([^)]*\)|calc\([^)]*\)|linear-gradient\([^)]*\)|radial-gradient\([^)]*\)|conic-gradient\([^)]*\))/, cls: 'syn-string' },
+      { regex: /\b(?:px|em|rem|vw|vh|vmin|vmax|%|ch|ex|cm|mm|in|pt|pc|deg|rad|grad|turn|s|ms|dpi|dpcm|dppx|fr)\b/, cls: 'syn-number' },
+      { regex: /#[0-9a-fA-F]{3,8}\b/, cls: 'syn-string' },
+    ]},
+    html: { patterns: [
+      { regex: /<!--[\s\S]*?-->/, cls: 'syn-comment' },
+      { regex: /<!DOCTYPE\s[^>]+>/i, cls: 'syn-preprocessor' },
+      { regex: /<\/?[a-zA-Z][\w-]*(?:\s[^>]*)?\/?>/g, cls: 'syn-tag' },
+      { regex: /(?<=\s)(?:[a-zA-Z][\w-]*)(?=\s*=)/, cls: 'syn-attr' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+    ]},
+    yaml: { patterns: [
+      { regex: /#.*$/, cls: 'syn-comment' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /^\s*[\w.-]+\s*:/, cls: 'syn-keyword' },
+      { regex: /&[\w-]+/, cls: 'syn-variable' },
+      { regex: /\*[\w-]+/, cls: 'syn-variable' },
+      { regex: /![\w-]+/, cls: 'syn-type' },
+      { regex: /\b(?:true|false|yes|no|on|off|null|~)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d+\.?\d*\b/, cls: 'syn-number' },
+    ]},
+    yml: { patterns: [
+      { regex: /#.*$/, cls: 'syn-comment' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /^\s*[\w.-]+\s*:/, cls: 'syn-keyword' },
+      { regex: /&[\w-]+/, cls: 'syn-variable' },
+      { regex: /\*[\w-]+/, cls: 'syn-variable' },
+      { regex: /![\w-]+/, cls: 'syn-type' },
+      { regex: /\b(?:true|false|yes|no|on|off|null|~)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d+\.?\d*\b/, cls: 'syn-number' },
+    ]},
+    toml: { patterns: [
+      { regex: /#.*$/, cls: 'syn-comment' },
+      { regex: /"""(?:\\.|[\s\S])*?"""/, cls: 'syn-string' },
+      { regex: /'''(?:\\.|[\s\S])*?'''/, cls: 'syn-string' },
+      { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
+      { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
+      { regex: /^\[\[?[\w.-]+(?:\.[\w.-]+)*\]\]?/, cls: 'syn-section' },
+      { regex: /^\s*[\w.-]+\s*=/, cls: 'syn-keyword' },
+      { regex: /\b(?:true|false)\b/, cls: 'syn-boolean' },
+      { regex: /\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?\b/, cls: 'syn-number' },
+      { regex: /\b\d+\.?\d*\b/, cls: 'syn-number' },
+    ]},
+  };
+
   return {
     windows: [],
     counts: { total: 0, busy: 0, waiting: 0, idle: 0, bash: 0, completed: 0 },
@@ -1073,6 +1351,7 @@ function superCliTerminal() {
     showNodes: false,
     showSettings: false,
     theme: 'light',
+    syntaxTheme: 'lucid-dark',
     localEnabled: false,
     enablingLocal: false,
     terminalWindow: null,
@@ -1108,6 +1387,7 @@ function superCliTerminal() {
     newDirName: '',
     newDirCreating: false,
     newDirError: '',
+    _highlightTimeout: null,
     editor: {
       path: '',
       content: '',
@@ -1653,7 +1933,74 @@ function superCliTerminal() {
       }
     },
 
+    _escapeHtml(text) {
+      return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    },
+
+    getEditorFileExt() {
+      const name = (this.editor.path || '').toLowerCase();
+      const dot = name.lastIndexOf('.');
+      return dot > 0 ? name.slice(dot + 1) : '';
+    },
+
+    highlightCode(content, ext) {
+      if (!content) return '';
+      const def = SYNTAX_DEFS[ext];
+      if (!def || !def.patterns || !def.patterns.length) return this._escapeHtml(content);
+      let html = this._escapeHtml(content);
+      const parts = [];
+      const classes = [];
+      for (const p of def.patterns) {
+        parts.push('(' + p.regex.source + ')');
+        classes.push(p.cls);
+      }
+      const flags = 'g' + (def.flags || '');
+      const combined = new RegExp(parts.join('|'), flags);
+      html = html.replace(combined, (match, ...groups) => {
+        const idx = groups.slice(0, groups.length - 2).findIndex(g => g !== undefined);
+        if (idx >= 0) {
+          return '<span class="' + classes[idx] + '">' + match + '</span>';
+        }
+        return match;
+      });
+      return html;
+    },
+
+    syncEditorHighlight() {
+      const codeEl = this.$refs.editorHighlight;
+      if (!codeEl) return;
+      const ext = this.getEditorFileExt();
+      codeEl.innerHTML = this.highlightCode(this.editor.content, ext);
+    },
+
+    scheduleHighlight() {
+      if (this._highlightTimeout) clearTimeout(this._highlightTimeout);
+      const len = (this.editor.content || '').length;
+      if (len > 500000) return;
+      if (len < 30000) {
+        this.syncEditorHighlight();
+      } else {
+        this._highlightTimeout = setTimeout(() => {
+          this.syncEditorHighlight();
+        }, 150);
+      }
+    },
+
+    syncEditorScroll() {
+      const textarea = this.$refs.editorTextarea;
+      const pre = this.$refs.editorViewport?.querySelector('.editor-highlight-layer');
+      if (textarea && pre) {
+        pre.scrollTop = textarea.scrollTop;
+        pre.scrollLeft = textarea.scrollLeft;
+      }
+    },
+
     resetEditor() {
+      if (this._highlightTimeout) clearTimeout(this._highlightTimeout);
+      this._highlightTimeout = null;
       this.editor = {
         path: '',
         content: '',
@@ -1664,6 +2011,8 @@ function superCliTerminal() {
         dirty: false,
         error: '',
       };
+      const codeEl = this.$refs.editorHighlight;
+      if (codeEl) codeEl.innerHTML = '';
     },
 
     async openEditorFile(path) {
@@ -1687,6 +2036,7 @@ function superCliTerminal() {
         this.editor.content = content;
         this.editor.originalContent = content;
         this.editor.dirty = false;
+        this.$nextTick(() => this.syncEditorHighlight());
       } catch (e) {
         this.editor.error = String(e);
       } finally {
