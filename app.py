@@ -714,9 +714,10 @@ def _agent_resume_or_fork(platform: str, session_id: str, fork: bool) -> dict:
         args = ["fork" if fork else "resume", session_id]
     else:
         return {"ok": False, "error": f"resume/fork is not supported for {platform} sessions", "session_id": session_id}
-    # Wrap in bash -l so the login shell provides full PATH (nvm, bun, etc.)
+    # Wrap in bash -li so login+interactive shell sources both
+    # .bash_profile and .bashrc, picking up nvm/bun PATH entries.
     cmd_str = "exec " + platform + " " + " ".join(shlex.quote(a) for a in args)
-    command = ["bash", "-l", "-c", cmd_str]
+    command = ["bash", "-l", "-i", "-c", cmd_str]
     result = runner.launch_tmux(platform, command, cwd=cwd)
     result.update({"action": "forked" if fork else "resumed", "session_id": session_id, "cwd": cwd})
     return result
@@ -1934,10 +1935,10 @@ def agent_launch(payload: dict = Body(...), authorization: str | None = Header(N
     if platform == "bash":
         resolved_command = ["bash", "-l"]
     else:
-        # Wrap in bash -l so the login shell provides full PATH (nvm, bun, etc.)
-        # and finds codex/claude/node without manual binary hunting.
+        # Wrap in bash -li so login+interactive shell sources both
+        # .bash_profile and .bashrc, picking up nvm/bun PATH entries.
         cmd_str = "exec " + " ".join(shlex.quote(a) for a in command)
-        resolved_command = ["bash", "-l", "-c", cmd_str]
+        resolved_command = ["bash", "-l", "-i", "-c", cmd_str]
     display_name = _clean_display_name(payload.get("display_name") or payload.get("name"))
     if payload.get("tmux", True):
         return runner.launch_tmux(platform, resolved_command, cwd=str(cwd_path), display_name=display_name)
