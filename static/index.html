@@ -533,13 +533,14 @@
         </div>
         <!-- tabs inline in zoom mode -->
         <div x-show="terminalZoom" class="flex items-center gap-1">
+          <span class="text-gray-300 mx-1 select-none">|</span>
           <button @click="setTerminalTab('terminal')"
-                  class="px-2 py-0.5 text-xs rounded"
-                  :class="terminalPanelTab === 'terminal' ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
+                  class="text-xs border px-2 py-1 rounded"
+                  :class="terminalPanelTab === 'terminal' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
             Terminal</button>
           <button @click="setTerminalTab('editor')"
-                  class="px-2 py-0.5 text-xs rounded"
-                  :class="terminalPanelTab === 'editor' ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
+                  class="text-xs border px-2 py-1 rounded"
+                  :class="terminalPanelTab === 'editor' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
             Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
           <span class="text-[11px] text-gray-400" x-show="terminalPanelTab === 'editor'" x-text="editor.path || 'No file selected'"></span>
         </div>
@@ -593,7 +594,7 @@
              x-transition:leave-end="opacity-0 -translate-x-4"
              class="w-[19rem] shrink-0 flex flex-col overflow-hidden rounded-l border-y border-l border-gray-200 bg-slate-50"
              :class="terminalZoom ? 'h-full' : 'min-h-[30rem] lg:h-full'">
-        <div class="flex items-center gap-1.5 border-b border-gray-200 px-2 py-2">
+        <div class="flex items-center gap-1.5 border-b border-gray-200 px-2 py-2" x-show="!terminalZoom || sidebarView === 'files'">
           <button @click="loadTerminalPath(terminalExplorer.parent)"
                   :disabled="!terminalExplorer.parent || terminalExplorer.loading"
                   class="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Up</button>
@@ -616,7 +617,20 @@
                  class="hidden"
                  @change="uploadTerminalFile($event)">
         </div>
-        <div class="border-b border-gray-200 px-2 py-2">
+        <!-- sidebar view toggle (zoom only) -->
+        <div x-show="terminalZoom" class="flex items-center border-b border-gray-200 bg-gray-50">
+          <button @click="sidebarView = 'files'"
+                  class="flex-1 text-xs py-1.5 transition"
+                  :class="sidebarView === 'files' ? 'bg-white text-gray-800 font-semibold border-b-2 border-blue-400' : 'text-gray-500 hover:bg-gray-100'">
+            Files</button>
+          <button @click="sidebarView = 'terminals'"
+                  class="flex-1 text-xs py-1.5 transition"
+                  :class="sidebarView === 'terminals' ? 'bg-white text-gray-800 font-semibold border-b-2 border-blue-400' : 'text-gray-500 hover:bg-gray-100'">
+            Terminals</button>
+        </div>
+        <!-- file browser -->
+        <div x-show="sidebarView === 'files'" class="flex flex-col flex-1 min-h-0">
+        <div class="border-b border-gray-200 px-2 py-2" x-show="!terminalZoom">
           <input class="w-full rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-slate-400 focus:outline-none"
                  placeholder="Path"
                  x-model="terminalExplorer.pathInput"
@@ -666,6 +680,20 @@
                     x-text="fileBadgeLabel(entry)"></span>
               <span class="min-w-0 flex-1 truncate text-gray-800" x-text="entry.name"></span>
               <span class="shrink-0 text-[10px] text-gray-400" x-show="entry.error" x-text="entry.error"></span>
+            </button>
+          </template>
+        </div>
+        </div> <!-- end file browser -->
+        <!-- terminal browser -->
+        <div x-show="sidebarView === 'terminals'" class="flex-1 min-h-0 overflow-y-auto bg-white">
+          <div x-show="!windows.length" class="px-3 py-4 text-xs text-gray-400">No terminals</div>
+          <template x-for="w in windows.filter(item => item.tmux_session)" :key="windowKey(w)">
+            <button @click="openTerminal(w)"
+                    class="flex w-full items-center gap-2 border-b border-gray-100 px-3 py-2 text-left text-xs hover:bg-slate-50 transition">
+              <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                    :class="w.triage === 'waiting' ? 'bg-red-500 pulse-red' : w.triage === 'stalled' ? 'bg-amber-500' : w.triage === 'completed' ? 'bg-blue-500' : w.triage === 'working' ? 'bg-emerald-500' : 'bg-gray-400'"></span>
+              <span class="min-w-0 flex-1 truncate text-gray-800" x-text="w.name || w.project_name || w.pid"></span>
+              <span class="shrink-0 text-[10px] text-gray-400" x-text="w.node_name || w.node_id || ''"></span>
             </button>
           </template>
         </div>
@@ -1016,6 +1044,7 @@ function superCliTerminal() {
     terminalWindow: null,
     terminalZoom: false,
     terminalSidebarOpen: true,
+    sidebarView: 'files',
     terminal: null,
     terminalFitAddon: null,
     terminalSocket: null,
@@ -1723,6 +1752,7 @@ function superCliTerminal() {
       this.closeTerminalSession();
       this.terminalWindow = null;
       this.terminalZoom = false;
+      this.sidebarView = 'files';
       this.terminalPanelTab = 'terminal';
       this.resetEditor();
       this.terminalExplorer = {
