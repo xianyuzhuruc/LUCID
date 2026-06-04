@@ -1837,7 +1837,7 @@ function superCliTerminal() {
 
     async toggleTerminalSidebar() {
       this.terminalSidebarOpen = !this.terminalSidebarOpen;
-      this.$nextTick(() => setTimeout(() => this.reconnectTerminal(), 100));
+      this.$nextTick(() => setTimeout(() => this.reconnectTerminal(), 250));
     },
 
     async toggleTerminalZoom() {

@@ -309,8 +309,12 @@ def _resolve_command_local(command: list[str]) -> list[str]:
             _extra_dirs = [
                 Path("/usr/local/bin"),
                 Path("/usr/bin"),
+                Path("/usr/local/sbin"),
+                Path("/usr/sbin"),
                 Path.home() / ".local/bin",
                 Path.home() / "bin",
+                Path.home() / ".bun/bin",
+                Path("/root/.bun/bin"),
             ]
             nvm_versions_dir = Path.home() / ".nvm" / "versions" / "node"
             if nvm_versions_dir.exists():
@@ -331,10 +335,30 @@ def _resolve_command_local(command: list[str]) -> list[str]:
                     result = _maybe_node_prepend([str(candidate)] + command[1:])
                     break
             else:
-                raise HTTPException(
-                    400,
-                    f"command not found on agent PATH: {executable}",
-                )
+                # Last resort: ask a login shell via subprocess (gets the
+                # full interactive PATH the user sees at their prompt)
+                try:
+                    shell_result = subprocess.run(
+                        ["bash", "-lc", f"which {shlex.quote(executable)}"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if shell_result.returncode == 0 and shell_result.stdout.strip():
+                        resolved_shell = shell_result.stdout.strip().split("\n")[0]
+                        result = _maybe_node_prepend([resolved_shell] + command[1:])
+                    else:
+                        raise HTTPException(
+                            400,
+                            f"command not found on agent PATH: {executable}",
+                        )
+                except HTTPException:
+                    raise
+                except Exception:
+                    raise HTTPException(
+                        400,
+                        f"command not found on agent PATH: {executable}",
+                    )
     _command_cache[cache_key] = result
     return result
 
@@ -683,13 +707,16 @@ def _agent_resume_or_fork(platform: str, session_id: str, fork: bool) -> dict:
         return {"ok": False, "error": "session not found in index", "session_id": session_id}
     cwd = sess.get("project") or str(Path.home())
     if platform == "claude":
-        command = ["claude", "--resume", session_id]
+        args = ["--resume", session_id]
         if fork:
-            command.append("--fork-session")
+            args.append("--fork-session")
     elif platform == "codex":
-        command = ["codex", "fork" if fork else "resume", session_id]
+        args = ["fork" if fork else "resume", session_id]
     else:
         return {"ok": False, "error": f"resume/fork is not supported for {platform} sessions", "session_id": session_id}
+    # Wrap in bash -l so the login shell provides full PATH (nvm, bun, etc.)
+    cmd_str = "exec " + platform + " " + " ".join(shlex.quote(a) for a in args)
+    command = ["bash", "-l", "-c", cmd_str]
     result = runner.launch_tmux(platform, command, cwd=cwd)
     result.update({"action": "forked" if fork else "resumed", "session_id": session_id, "cwd": cwd})
     return result
@@ -1904,7 +1931,13 @@ def agent_launch(payload: dict = Body(...), authorization: str | None = Header(N
         raise HTTPException(400, f"cwd does not exist: {cwd}")
     if not cwd_path.is_dir():
         raise HTTPException(400, f"cwd is not a directory: {cwd}")
-    resolved_command = _resolve_command_local(command)
+    if platform == "bash":
+        resolved_command = ["bash", "-l"]
+    else:
+        # Wrap in bash -l so the login shell provides full PATH (nvm, bun, etc.)
+        # and finds codex/claude/node without manual binary hunting.
+        cmd_str = "exec " + " ".join(shlex.quote(a) for a in command)
+        resolved_command = ["bash", "-l", "-c", cmd_str]
     display_name = _clean_display_name(payload.get("display_name") or payload.get("name"))
     if payload.get("tmux", True):
         return runner.launch_tmux(platform, resolved_command, cwd=str(cwd_path), display_name=display_name)
