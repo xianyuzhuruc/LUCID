@@ -115,7 +115,7 @@
 <body class="bg-gray-50 text-gray-900 min-h-screen dark:bg-gray-900 dark:text-gray-100" x-data="superCliTerminal()" x-init="init()" x-cloak>
 
 <!-- ===== Top bar: windows that need attention ===== -->
-<div class="sticky top-0 z-50 bg-slate-900 text-white px-4 shadow-lg flex items-center gap-3 text-sm h-9"
+<div class="sticky top-0 z-50 bg-slate-900 text-white px-4 shadow-lg flex items-center gap-3 text-sm h-9 border-b-2 border-red-500/60 dark:border-b-2 dark:border-gray-500"
      x-show="attentionWindows.length > 0 || terminalZoom" x-transition>
   <span class="font-bold shrink-0">ATTENTION (<span x-text="attentionWindows.length"></span>)</span>
   <div class="flex gap-2 overflow-x-auto">
@@ -177,13 +177,13 @@
       <option value="stalled">Stalled</option>
       <option value="completed">Completed</option>
     </select>
-    <button @click="showSettings = true" class="text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 text-lg leading-none" title="Settings">⚙</button>
     <select x-model="nodeFilter" class="border rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600">
       <option value="">All nodes</option>
       <template x-for="n in nodes" :key="n.id">
         <option :value="n.id" x-text="n.name || n.id"></option>
       </template>
     </select>
+    <button @click="showSettings = true" class="text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 text-lg leading-none" title="Settings">⚙</button>
   </div>
 </header>
 
@@ -1914,7 +1914,7 @@ function superCliTerminal() {
         }
         this.newDirOpen = false;
         this.newDirName = '';
-        await this.loadTerminalPath(d.path || directory);
+        await this.loadTerminalPath(d.directory || directory);
         this.toast('Created ' + (d.name || name));
       } catch (e) {
         this.newDirError = String(e.message || e);
