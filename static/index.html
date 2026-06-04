@@ -657,25 +657,25 @@
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <button @click="sendTerminalKey('Enter')"
-                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700">Enter</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600">Enter</button>
         <button @click="copyTerminalSelection()"
-                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700">Copy</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600">Copy</button>
         <button @click="pasteTerminalClipboard()"
-                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700">Paste</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600">Paste</button>
         <button @click="terminateTerminalWindow()"
-                class="text-xs border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/40 dark:bg-red-900/20">Terminate</button>
+                class="text-xs border border-red-300 bg-white dark:bg-gray-700 text-red-700 dark:text-red-400 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/30">Terminate</button>
         <button @click="sendTerminalKey('C-c')"
-                class="text-xs border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/40 dark:bg-red-900/20">Ctrl-C</button>
+                class="text-xs border border-red-200 bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/30">Ctrl-C</button>
         <button @click="completeTerminalWindow()"
                 x-show="terminalWindow?.triage !== 'completed'"
-                class="text-xs border border-blue-300 dark:border-blue-800 text-blue-600 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/40 dark:bg-blue-900/20">Complete</button>
+                class="text-xs border border-blue-300 bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30">Complete</button>
         <button @click="toggleTerminalZoom()"
-                class="text-xs border px-2 py-1 rounded"
-                :class="terminalZoom ? 'border-purple-400 dark:border-purple-600 text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/40' : 'border-purple-300 dark:border-purple-700 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/40 dark:bg-purple-900/20'"
+                class="text-xs border px-2 py-1 rounded bg-white"
+                :class="terminalZoom ? 'border-purple-400 dark:border-purple-500 text-purple-700 dark:text-purple-300 dark:bg-purple-900/40' : 'border-purple-300 text-purple-600 dark:text-purple-400 dark:bg-gray-700 hover:bg-purple-50 dark:hover:bg-purple-900/30'"
                 x-text="terminalZoom ? 'Unzoom' : 'Zoom'"></button>
         <button @click="reconnectTerminal()"
-                class="text-xs border px-2 py-1 rounded"
-                :class="terminalWindow?.triage === 'completed' ? 'border-green-300 dark:border-green-800 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/40 dark:bg-green-900/20' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'"
+                class="text-xs border px-2 py-1 rounded bg-white"
+                :class="terminalWindow?.triage === 'completed' ? 'border-green-300 text-green-600 dark:text-green-400 dark:bg-gray-700 hover:bg-green-50 dark:hover:bg-green-900/30' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600'"
                 x-text="terminalWindow?.triage === 'completed' ? 'Start' : 'Reconnect'"></button>
         <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
       </div>
@@ -1139,7 +1139,7 @@
 <script>
 function superCliTerminal() {
   const SYNTAX_DEFS = {
-    md: { patterns: [
+    md: { flags: 'm', patterns: [
       { regex: /```[\s\S]*?```/, cls: 'syn-string' },
       { regex: /`[^`\n]+`/, cls: 'syn-string' },
       { regex: /^#{1,6}\s.*$/, cls: 'syn-heading' },
@@ -1151,7 +1151,7 @@ function superCliTerminal() {
       { regex: /^>\s.*$/, cls: 'syn-comment' },
       { regex: /^---$/, cls: 'syn-comment' },
     ]},
-    py: { patterns: [
+    py: { flags: 'm', patterns: [
       { regex: /#.*$/, cls: 'syn-comment' },
       { regex: /(?:'''[\s\S]*?'''|"""(?:\\.|[\s\S])*?""")/, cls: 'syn-string' },
       { regex: /(?:f|r|u|b)?'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
@@ -1164,7 +1164,7 @@ function superCliTerminal() {
       { regex: /(?:(?<=def\s)|\b)([a-zA-Z_]\w*)(?=\s*\()/, cls: 'syn-function' },
       { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?\b/, cls: 'syn-number' },
     ]},
-    sh: { patterns: [
+    sh: { flags: 'm', patterns: [
       { regex: /#.*$/, cls: 'syn-comment' },
       { regex: /^#!.*$/, cls: 'syn-preprocessor' },
       { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
@@ -1176,7 +1176,7 @@ function superCliTerminal() {
       { regex: /\b(?:if|then|else|elif|fi|for|while|do|done|case|esac|function|return|exit|export|source|local|declare|unset|readonly|shift|break|continue|trap|eval|exec)\b/, cls: 'syn-keyword' },
       { regex: /\b(?:echo|cd|pwd|ls|cat|grep|sed|awk|curl|wget|mkdir|rm|cp|mv|chmod|chown|ln|tar|gzip|ssh|scp|rsync|git|docker|sudo|ps|kill|env|set|alias|unalias|type|which|true|false|test|printf|read)\b/, cls: 'syn-builtin' },
     ]},
-    c: { patterns: [
+    c: { flags: 'm', patterns: [
       { regex: /\/\/.*$/, cls: 'syn-comment' },
       { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
       { regex: /^#\s*(?:include|define|ifdef|ifndef|if|else|elif|endif|pragma|error|warning|undef|line)\b.*$/, cls: 'syn-preprocessor' },
@@ -1188,7 +1188,7 @@ function superCliTerminal() {
       { regex: /\b(?:#include|#define|#ifdef|#ifndef|#endif|#pragma)\b/, cls: 'syn-preprocessor' },
       { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[uUlLfF]*)\b/, cls: 'syn-number' },
     ]},
-    cpp: { patterns: [
+    cpp: { flags: 'm', patterns: [
       { regex: /\/\/.*$/, cls: 'syn-comment' },
       { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
       { regex: /^#\s*(?:include|define|ifdef|ifndef|if|else|elif|endif|pragma|error|warning|undef|line)\b.*$/, cls: 'syn-preprocessor' },
@@ -1200,7 +1200,7 @@ function superCliTerminal() {
       { regex: /\b(?:NULL|true|false|nullptr|True|False)\b/, cls: 'syn-boolean' },
       { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[uUlLfF]*)\b/, cls: 'syn-number' },
     ]},
-    h: { patterns: [
+    h: { flags: 'm', patterns: [
       { regex: /\/\/.*$/, cls: 'syn-comment' },
       { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
       { regex: /^#\s*(?:include|define|ifdef|ifndef|if|else|elif|endif|pragma|error|warning|undef|line)\b.*$/, cls: 'syn-preprocessor' },
@@ -1211,7 +1211,7 @@ function superCliTerminal() {
       { regex: /\b(?:NULL|true|false|nullptr|True|False)\b/, cls: 'syn-boolean' },
       { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[uUlLfF]*)\b/, cls: 'syn-number' },
     ]},
-    hpp: { patterns: [
+    hpp: { flags: 'm', patterns: [
       { regex: /\/\/.*$/, cls: 'syn-comment' },
       { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
       { regex: /^#\s*(?:include|define|ifdef|ifndef|if|else|elif|endif|pragma|error|warning|undef|line)\b.*$/, cls: 'syn-preprocessor' },
@@ -1223,17 +1223,18 @@ function superCliTerminal() {
       { regex: /\b(?:NULL|true|false|nullptr|True|False)\b/, cls: 'syn-boolean' },
       { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?(?:[uUlLfF]*)\b/, cls: 'syn-number' },
     ]},
-    sql: { flags: 'i', patterns: [
+    sql: { flags: 'im', patterns: [
       { regex: /--.*$/, cls: 'syn-comment' },
       { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
       { regex: /'(?:[^']|'')*'/, cls: 'syn-string' },
       { regex: /"(?:[^"]|"")*"/, cls: 'syn-string' },
-      { regex: /\b(?:SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|INDEX|VIEW|DROP|ALTER|ADD|COLUMN|CONSTRAINT|PRIMARY|KEY|FOREIGN|REFERENCES|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|FULL|ON|AND|OR|NOT|NULL|IS|LIKE|IN|BETWEEN|EXISTS|UNION|ALL|DISTINCT|AS|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|ASC|DESC|CASE|WHEN|THEN|ELSE|END|BEGIN|COMMIT|ROLLBACK|TRANSACTION|GRANT|REVOKE|TRUNCATE|REPLACE|MERGE|EXCEPT|INTERSECT|WITH|RECURSIVE|OVER|PARTITION|WINDOW|ROWS|RANGE|UNBOUNDED|PRECEDING|FOLLOWING|CURRENT|ROW|IF|TEMPORARY|TEMP|DATABASE|SCHEMA|DEFAULT|CHECK|UNIQUE|CASCADE|RESTRICT|TRIGGER|FUNCTION|PROCEDURE|RETURNS|LANGUAGE|IMMUTABLE|STABLE|VOLATILE|EXECUTE|CALL|EXPLAIN|ANALYZE|VACUUM)\b/, cls: 'syn-keyword' },
+      { regex: /\b(?:SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|INDEX|VIEW|DROP|ALTER|ADD|COLUMN|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|FULL|ON|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|UNION|ALL|DISTINCT|AS|CASE|WHEN|THEN|ELSE|END|BEGIN|COMMIT|ROLLBACK|WITH|OVER|PARTITION|DATABASE|SCHEMA|TRUNCATE|REPLACE|MERGE|EXCEPT|INTERSECT|GRANT|REVOKE|EXECUTE|CALL|EXPLAIN)\b/, cls: 'syn-function' },
+      { regex: /\b(?:CONSTRAINT|PRIMARY|KEY|FOREIGN|REFERENCES|AND|OR|NOT|NULL|IS|LIKE|IN|BETWEEN|EXISTS|ASC|DESC|TRANSACTION|RECURSIVE|WINDOW|ROWS|RANGE|UNBOUNDED|PRECEDING|FOLLOWING|CURRENT|ROW|IF|TEMPORARY|TEMP|DEFAULT|CHECK|UNIQUE|CASCADE|RESTRICT|TRIGGER|FUNCTION|PROCEDURE|RETURNS|LANGUAGE|IMMUTABLE|STABLE|VOLATILE|ANALYZE|VACUUM)\b/, cls: 'syn-keyword' },
       { regex: /\b(?:COUNT|SUM|AVG|MIN|MAX|COALESCE|NULLIF|CAST|CONVERT|SUBSTR|SUBSTRING|LENGTH|TRIM|UPPER|LOWER|REPLACE|CONCAT|NOW|CURRENT_DATE|CURRENT_TIMESTAMP|DATE|TIME|EXTRACT|YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|ABS|ROUND|CEIL|CEILING|FLOOR|MOD|POWER|SQRT|RANK|DENSE_RANK|ROW_NUMBER|LEAD|LAG|FIRST_VALUE|LAST_VALUE|NTH_VALUE|NTILE)\b/, cls: 'syn-builtin' },
       { regex: /\b(?:TRUE|FALSE|NULL)\b/, cls: 'syn-boolean' },
       { regex: /\b\d+\.?\d*\b/, cls: 'syn-number' },
     ]},
-    js: { patterns: [
+    js: { flags: 'm', patterns: [
       { regex: /\/\/.*$/, cls: 'syn-comment' },
       { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
       { regex: /`(?:\\.|\$\{[^}]*\}|[^`\\])*`/, cls: 'syn-string' },
@@ -1245,7 +1246,7 @@ function superCliTerminal() {
       { regex: /\b(?:true|false|null|undefined|NaN|Infinity)\b/, cls: 'syn-boolean' },
       { regex: /\b\d+\.?\d*(?:[eE][+-]?\d+)?\b/, cls: 'syn-number' },
     ]},
-    ts: { patterns: [
+    ts: { flags: 'm', patterns: [
       { regex: /\/\/.*$/, cls: 'syn-comment' },
       { regex: /\/\*[\s\S]*?\*\//, cls: 'syn-comment' },
       { regex: /`(?:\\.|\$\{[^}]*\}|[^`\\])*`/, cls: 'syn-string' },
@@ -1279,7 +1280,7 @@ function superCliTerminal() {
       { regex: /(?<=\s)(?:[a-zA-Z][\w-]*)(?=\s*=)/, cls: 'syn-attr' },
       { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
     ]},
-    yaml: { patterns: [
+    yaml: { flags: 'm', patterns: [
       { regex: /#.*$/, cls: 'syn-comment' },
       { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
       { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
@@ -1290,7 +1291,7 @@ function superCliTerminal() {
       { regex: /\b(?:true|false|yes|no|on|off|null|~)\b/, cls: 'syn-boolean' },
       { regex: /\b\d+\.?\d*\b/, cls: 'syn-number' },
     ]},
-    yml: { patterns: [
+    yml: { flags: 'm', patterns: [
       { regex: /#.*$/, cls: 'syn-comment' },
       { regex: /"(?:\\.|[^"\\])*"/, cls: 'syn-string' },
       { regex: /'(?:\\.|[^'\\])*'/, cls: 'syn-string' },
@@ -1301,7 +1302,7 @@ function superCliTerminal() {
       { regex: /\b(?:true|false|yes|no|on|off|null|~)\b/, cls: 'syn-boolean' },
       { regex: /\b\d+\.?\d*\b/, cls: 'syn-number' },
     ]},
-    toml: { patterns: [
+    toml: { flags: 'm', patterns: [
       { regex: /#.*$/, cls: 'syn-comment' },
       { regex: /"""(?:\\.|[\s\S])*?"""/, cls: 'syn-string' },
       { regex: /'''(?:\\.|[\s\S])*?'''/, cls: 'syn-string' },
