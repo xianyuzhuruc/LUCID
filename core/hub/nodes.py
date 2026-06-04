@@ -570,9 +570,7 @@ def aggregate_snapshot() -> dict:
             w["triage_reason"] = "Completed"
             w["activity_label"] = "Completed"
     windows.sort(key=lambda w: (
-        {"waiting": 0, "stalled": 1, "working": 2, "bash": 3, "completed": 4}.get(w.get("triage"), 5),
-        w.get("node_id", ""),
-        -(w.get("updated_at") or 0),
+        (w.get("name") or w.get("project_name") or "").lower(),
     ))
     return {
         "windows": windows,

@@ -594,6 +594,18 @@
              x-transition:leave-end="opacity-0 -translate-x-4"
              class="w-[19rem] shrink-0 flex flex-col overflow-hidden rounded-l border-y border-l border-gray-200 bg-slate-50"
              :class="terminalZoom ? 'h-full' : 'min-h-[30rem] lg:h-full'">
+        <!-- sidebar view toggle (zoom only) -->
+        <div x-show="terminalZoom" class="flex items-center bg-gray-50 border-b border-gray-200">
+          <button @click="sidebarView = 'files'"
+                  class="flex-1 text-xs py-1.5 transition"
+                  :class="sidebarView === 'files' ? 'bg-white text-gray-800 font-semibold border-b-2 border-blue-400' : 'text-gray-500 hover:bg-gray-100'">
+            Files</button>
+          <button @click="sidebarView = 'terminals'"
+                  class="flex-1 text-xs py-1.5 transition"
+                  :class="sidebarView === 'terminals' ? 'bg-white text-gray-800 font-semibold border-b-2 border-blue-400' : 'text-gray-500 hover:bg-gray-100'">
+            Terminals</button>
+        </div>
+        <!-- file toolbar -->
         <div class="flex items-center gap-1.5 border-b border-gray-200 px-2 py-2" x-show="!terminalZoom || sidebarView === 'files'">
           <button @click="loadTerminalPath(terminalExplorer.parent)"
                   :disabled="!terminalExplorer.parent || terminalExplorer.loading"
@@ -617,20 +629,9 @@
                  class="hidden"
                  @change="uploadTerminalFile($event)">
         </div>
-        <!-- sidebar view toggle (zoom only) -->
-        <div x-show="terminalZoom" class="flex items-center border-b border-gray-200 bg-gray-50">
-          <button @click="sidebarView = 'files'"
-                  class="flex-1 text-xs py-1.5 transition"
-                  :class="sidebarView === 'files' ? 'bg-white text-gray-800 font-semibold border-b-2 border-blue-400' : 'text-gray-500 hover:bg-gray-100'">
-            Files</button>
-          <button @click="sidebarView = 'terminals'"
-                  class="flex-1 text-xs py-1.5 transition"
-                  :class="sidebarView === 'terminals' ? 'bg-white text-gray-800 font-semibold border-b-2 border-blue-400' : 'text-gray-500 hover:bg-gray-100'">
-            Terminals</button>
-        </div>
         <!-- file browser -->
         <div x-show="sidebarView === 'files'" class="flex flex-col flex-1 min-h-0">
-        <div class="border-b border-gray-200 px-2 py-2" x-show="!terminalZoom">
+        <div class="border-b border-gray-200 px-2 py-2">
           <input class="w-full rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-slate-400 focus:outline-none"
                  placeholder="Path"
                  x-model="terminalExplorer.pathInput"
@@ -687,7 +688,7 @@
         <!-- terminal browser -->
         <div x-show="sidebarView === 'terminals'" class="flex-1 min-h-0 overflow-y-auto bg-white">
           <div x-show="!windows.length" class="px-3 py-4 text-xs text-gray-400">No terminals</div>
-          <template x-for="w in windows.filter(item => item.tmux_session)" :key="windowKey(w)">
+          <template x-for="w in sortedTerminals" :key="windowKey(w)">
             <button @click="openTerminal(w)"
                     class="flex w-full items-center gap-2 border-b border-gray-100 px-3 py-2 text-left text-xs hover:bg-slate-50 transition">
               <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0"
@@ -1136,6 +1137,13 @@ function superCliTerminal() {
     },
     get waitingWindows() {
       return this.attentionWindows;
+    },
+    get sortedTerminals() {
+      return this.windows.filter(w => w.tmux_session).sort((a, b) => {
+        const na = (a.name || a.project_name || String(a.pid)).toLowerCase();
+        const nb = (b.name || b.project_name || String(b.pid)).toLowerCase();
+        return na < nb ? -1 : na > nb ? 1 : 0;
+      });
     },
     get filteredWindows() {
       return this.windows.filter(w => {

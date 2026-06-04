@@ -57,8 +57,7 @@ def wire_snapshot(node_id: Optional[str] = None, node_name: Optional[str] = None
         snap["counts"]["bash"] += sum(1 for w in managed if w.get("triage") == "bash")
         snap["counts"]["completed"] += sum(1 for w in managed if w.get("triage") == "completed")
         snap["windows"].sort(key=lambda w: (
-            patrol.TRIAGE_PRIORITY.get(w.get("triage", ""), 99),
-            -w.get("updated_at", 0),
+            (w.get("name") or w.get("project_name") or "").lower(),
         ))
 
     snap["node"] = local_node_info(nid)
