@@ -253,15 +253,15 @@
             <template x-for="h in sshHistory" :key="h.id + ':' + h.host + ':' + h.user + ':' + h.ssh_port">
               <button type="button"
                       @click="applySshHistory(h)"
-                      class="w-full rounded border border-gray-200 dark:border-gray-600 px-2 py-1 text-left hover:bg-slate-50 dark:hover:bg-gray-700">
+                      class="w-full rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-left hover:bg-slate-50 dark:hover:bg-gray-600">
                 <div class="flex items-center justify-between gap-2">
-                  <span class="min-w-0 truncate font-medium text-gray-700" x-text="h.node_name || h.id"></span>
+                  <span class="min-w-0 truncate font-medium text-gray-700 dark:text-gray-200" x-text="h.node_name || h.id"></span>
                   <span class="flex shrink-0 items-center gap-1">
-                    <span x-show="h.password" class="rounded bg-emerald-50 px-1 text-[10px] text-emerald-700">pwd</span>
-                    <span class="text-[10px] text-gray-400" x-text="h.id"></span>
+                    <span x-show="h.password" class="rounded bg-emerald-50 dark:bg-emerald-900/30 px-1 text-[10px] text-emerald-700 dark:text-emerald-400">pwd</span>
+                    <span class="text-[10px] text-gray-400 dark:text-gray-500" x-text="h.id"></span>
                   </span>
                 </div>
-                <div class="truncate text-[11px] text-gray-500"
+                <div class="truncate text-[11px] text-gray-500 dark:text-gray-400"
                      x-text="(h.user ? h.user + '@' : '') + h.host + ':' + (h.ssh_port || 22)"></div>
               </button>
             </template>
@@ -272,7 +272,7 @@
           <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" placeholder="node name" x-model="deployForm.node_name">
           <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="host" x-model="deployForm.host">
           <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" placeholder="user" x-model="deployForm.user">
-          <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="ssh port" x-model.number="deployForm.ssh_port">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" placeholder="ssh port" x-model.number="deployForm.ssh_port">
           <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" type="number" placeholder="agent port: auto" x-model.number="deployForm.agent_port">
           <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="remote dir" x-model="deployForm.remote_dir">
         </div>
