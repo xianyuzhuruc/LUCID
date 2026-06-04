@@ -234,11 +234,6 @@ def record_ssh_history(row: dict[str, Any]) -> None:
     if clean is None:
         return
     existing_rows = load_ssh_history()
-    existing = next((item for item in existing_rows if item["id"] == clean["id"]), None)
-    if row.get("forget_password"):
-        clean.pop("password", None)
-    elif not clean.get("password") and existing and existing.get("password"):
-        clean["password"] = existing["password"]
     rows = [clean]
     rows.extend(item for item in existing_rows if item["id"] != clean["id"])
     rows = rows[:SSH_HISTORY_LIMIT]
@@ -265,9 +260,6 @@ def _clean_ssh_history_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "python_command": str(row.get("python_command") or "auto").strip() or "auto",
         "updated_at": float(row.get("updated_at") or 0),
     }
-    password = str(row.get("password") or "")
-    if password:
-        cleaned["password"] = password
     return cleaned
 
 

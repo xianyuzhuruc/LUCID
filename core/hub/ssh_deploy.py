@@ -93,7 +93,6 @@ class DeployRequest:
     remote_dir: str = "~/.lucid/agent"
     node_name: str = ""
     python_command: str = "auto"
-    remember_password: bool = True
 
 
 def deploy_agent(req: DeployRequest, progress: DeployProgress | None = None) -> dict:
@@ -103,11 +102,67 @@ def deploy_agent(req: DeployRequest, progress: DeployProgress | None = None) -> 
         raise ValueError("id, host, and user are required")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", req.id):
         raise ValueError("id must contain only letters, numbers, dot, underscore, or dash")
-    _record_deploy_ssh_history(req)
 
-    _report_progress(progress, "prepare_local", "Preparing local SSH key and source archive")
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     STATE_DIR.chmod(0o700)
+
+    # ---- If the user gave a password, bootstrap SSH key auth first ----
+    if req.password:
+        _report_progress(progress, "bootstrap_key", "Generating local SSH key and copying to remote server")
+        identity_file = _ensure_local_key()
+        pubkey_path = identity_file.with_suffix(".pub")
+        # One-shot password connection just to install the public key
+        pw_client = paramiko.SSHClient()
+        pw_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        pw_client.connect(
+            hostname=req.host,
+            port=req.ssh_port,
+            username=req.user,
+            password=req.password,
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=20,
+        )
+        try:
+            _install_public_key(pw_client, pubkey_path)
+        finally:
+            pw_client.close()
+        _report_progress(progress, "bootstrap_key", "SSH key installed on remote — switching to key-based auth")
+        # Continue with key-based auth from here; do NOT persist the password.
+        key_req = DeployRequest(
+            id=req.id,
+            host=req.host,
+            user=req.user,
+            password="",
+            identity_file=str(identity_file),
+            ssh_port=req.ssh_port,
+            agent_port=req.agent_port,
+            local_port=req.local_port,
+            remote_dir=req.remote_dir,
+            node_name=req.node_name,
+            python_command=req.python_command,
+        )
+        _record_deploy_ssh_history(key_req)
+    else:
+        _record_deploy_ssh_history(req)
+
+    _report_progress(progress, "prepare_local", "Preparing local SSH key and source archive")
+    # If password bootstrap happened above, use the key we installed on the remote.
+    # Replace req.identity_file so the connection and config both use it.
+    if req.password:
+        req = DeployRequest(
+            id=req.id,
+            host=req.host,
+            user=req.user,
+            password="",
+            identity_file=str(identity_file),
+            ssh_port=req.ssh_port,
+            agent_port=req.agent_port,
+            local_port=req.local_port,
+            remote_dir=req.remote_dir,
+            node_name=req.node_name,
+            python_command=req.python_command,
+        )
     identity_file = _deploy_identity_file(req)
     token = secrets.token_urlsafe(32)
     local_port = req.local_port or _pick_local_port()
@@ -200,8 +255,7 @@ def _record_deploy_ssh_history(req: DeployRequest) -> None:
         "node_name": req.node_name,
         "host": req.host,
         "user": req.user,
-        "password": req.password if req.remember_password else "",
-        "forget_password": not req.remember_password,
+        "password": "",
         "ssh_port": req.ssh_port,
         "agent_port": req.agent_port,
         "local_port": req.local_port,

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LUCID</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
@@ -28,7 +29,7 @@
 </style>
 </head>
 
-<body class="bg-gray-50 text-gray-900 min-h-screen" x-data="superCliTerminal()" x-init="init()" x-cloak>
+<body class="bg-gray-50 text-gray-900 min-h-screen dark:bg-gray-900 dark:text-gray-100" x-data="superCliTerminal()" x-init="init()" x-cloak>
 
 <!-- ===== Top bar: windows that need attention ===== -->
 <div class="sticky top-0 z-50 bg-slate-900 text-white px-4 shadow-lg flex items-center gap-3 text-sm h-9"
@@ -48,7 +49,7 @@
 </div>
 
 <!-- ===== Header ===== -->
-<header class="px-6 py-3 border-b bg-white flex items-center justify-between">
+<header class="px-6 py-3 border-b bg-white dark:bg-gray-800 dark:border-gray-700 flex items-center justify-between">
   <div class="flex items-center gap-3">
     <h1 class="text-xl font-bold tracking-tight">LUCID</h1>
     <div class="flex gap-1 text-xs">
@@ -71,7 +72,7 @@
     </div>
     <button @click="showNodes = !showNodes; if(showNodes) refreshNodes()"
             class="text-xs border px-2 py-1 rounded hover:bg-slate-50 transition"
-            :class="showNodes ? 'border-slate-400 text-slate-700 bg-slate-50' : 'border-gray-200 text-gray-600'">
+            :class="showNodes ? 'border-slate-400 text-slate-700 bg-slate-50 dark:bg-gray-700 dark:text-gray-200' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400'">
       Nodes</button>
     <div class="hidden lg:flex items-center gap-1 text-[10px]" x-show="nodes.length">
       <template x-for="n in nodes" :key="n.id">
@@ -84,16 +85,17 @@
   <div class="flex items-center gap-2">
     <input type="text" placeholder="Search..." x-model="searchQuery"
            @keydown.enter="doSearch()"
-           class="border rounded-lg pl-3 pr-8 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-400">
+           class="border rounded-lg pl-3 pr-8 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600">
     <button @click="doSearch()" class="text-gray-400 hover:text-gray-700 text-sm">Search</button>
-    <select x-model="statusFilter" class="border rounded-lg px-2 py-1.5 text-sm bg-white">
+    <select x-model="statusFilter" class="border rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600">
       <option value="">All</option>
       <option value="working">Working</option>
       <option value="waiting">Waiting</option>
       <option value="stalled">Stalled</option>
       <option value="completed">Completed</option>
     </select>
-    <select x-model="nodeFilter" class="border rounded-lg px-2 py-1.5 text-sm bg-white">
+    <button @click="showSettings = true" class="text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 text-lg leading-none" title="Settings">⚙</button>
+    <select x-model="nodeFilter" class="border rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600">
       <option value="">All nodes</option>
       <template x-for="n in nodes" :key="n.id">
         <option :value="n.id" x-text="n.name || n.id"></option>
@@ -102,14 +104,39 @@
   </div>
 </header>
 
+<!-- ===== Settings modal ===== -->
+<div x-show="showSettings" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" x-transition @click.self="showSettings = false">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl border dark:border-gray-700 p-6 w-80">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-lg dark:text-gray-100">Settings</h2>
+      <button @click="showSettings = false" class="text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 text-lg">&times;</button>
+    </div>
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <span class="text-sm dark:text-gray-200">Theme</span>
+        <div class="flex items-center gap-2">
+          <button @click="theme = 'light'; saveTheme()"
+                  class="text-xs border px-3 py-1.5 rounded transition"
+                  :class="theme === 'light' ? 'border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900 dark:text-blue-300 dark:border-blue-500' : 'border-gray-200 text-gray-600 dark:border-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'">
+            ☀️ Light</button>
+          <button @click="theme = 'dark'; saveTheme()"
+                  class="text-xs border px-3 py-1.5 rounded transition"
+                  :class="theme === 'dark' ? 'border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900 dark:text-blue-300 dark:border-blue-500' : 'border-gray-200 text-gray-600 dark:border-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'">
+            🌙 Dark</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <main class="px-6 py-4">
 
   <!-- ===== Nodes panel ===== -->
-  <div x-show="showNodes" class="mb-4 bg-white rounded-xl shadow-sm border p-4" x-transition>
+  <div x-show="showNodes" class="mb-4 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow-sm border p-4" x-transition>
     <div class="flex items-center justify-between mb-3">
       <div class="flex items-center gap-2">
         <h2 class="font-semibold text-sm">Nodes (<span x-text="nodes.length"></span>)</h2>
-        <span x-show="!localEnabled" class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">remote-only</span>
+        <span x-show="!localEnabled" class="rounded-full bg-slate-100 dark:bg-gray-700 px-2 py-0.5 text-[10px] text-slate-500 dark:text-gray-400">remote-only</span>
       </div>
       <div class="flex items-center gap-2">
         <button @click="syncAllNodes()"
@@ -138,7 +165,7 @@
             <template x-for="h in sshHistory" :key="h.id + ':' + h.host + ':' + h.user + ':' + h.ssh_port">
               <button type="button"
                       @click="applySshHistory(h)"
-                      class="w-full rounded border border-gray-200 px-2 py-1 text-left hover:bg-slate-50">
+                      class="w-full rounded border border-gray-200 dark:border-gray-600 px-2 py-1 text-left hover:bg-slate-50 dark:hover:bg-gray-700">
                 <div class="flex items-center justify-between gap-2">
                   <span class="min-w-0 truncate font-medium text-gray-700" x-text="h.node_name || h.id"></span>
                   <span class="flex shrink-0 items-center gap-1">
@@ -153,18 +180,13 @@
           </div>
         </div>
         <div class="grid grid-cols-2 gap-2 text-xs">
-          <input class="border rounded px-2 py-1" placeholder="node id" x-model="deployForm.id">
-          <input class="border rounded px-2 py-1" placeholder="node name" x-model="deployForm.node_name">
-          <input class="border rounded px-2 py-1 col-span-2" placeholder="host" x-model="deployForm.host">
-          <input class="border rounded px-2 py-1" placeholder="user" x-model="deployForm.user">
-          <input class="border rounded px-2 py-1" type="password" placeholder="password (optional)" x-model="deployForm.password">
-          <label class="col-span-2 flex items-center gap-2 text-[11px] text-gray-600">
-            <input class="h-3.5 w-3.5" type="checkbox" x-model="deployForm.remember_password">
-            <span>Remember password locally</span>
-          </label>
-          <input class="border rounded px-2 py-1" type="number" placeholder="ssh port" x-model.number="deployForm.ssh_port">
-          <input class="border rounded px-2 py-1" type="number" placeholder="agent port: auto" x-model.number="deployForm.agent_port">
-          <input class="border rounded px-2 py-1 col-span-2" placeholder="remote dir" x-model="deployForm.remote_dir">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" placeholder="node id" x-model="deployForm.id">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" placeholder="node name" x-model="deployForm.node_name">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="host" x-model="deployForm.host">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" placeholder="user" x-model="deployForm.user">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="ssh port" x-model.number="deployForm.ssh_port">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" type="number" placeholder="agent port: auto" x-model.number="deployForm.agent_port">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="remote dir" x-model="deployForm.remote_dir">
         </div>
         <button @click="deployNode()"
                 class="mt-3 text-xs border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-50 disabled:opacity-50"
@@ -173,7 +195,7 @@
         </button>
         <div x-show="deployStatus.status"
              x-transition
-             class="mt-3 rounded border border-slate-200 bg-slate-50 p-2 text-xs">
+             class="mt-3 rounded border border-slate-200 dark:border-gray-600 bg-slate-50 dark:bg-gray-700 p-2 text-xs">
           <div class="flex items-center justify-between gap-2">
             <span class="rounded-full px-2 py-0.5 font-semibold"
                   :class="deployStatus.status === 'failed' ? 'bg-red-100 text-red-700' : deployStatus.status === 'succeeded' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'"
@@ -195,7 +217,7 @@
         </div>
       </div>
       <div class="lg:col-span-1 space-y-2 border rounded p-3">
-        <div x-show="nodes.length === 0" class="border border-dashed rounded p-4 text-xs text-gray-400">
+        <div x-show="nodes.length === 0" class="border border-dashed dark:border-gray-600 rounded p-4 text-xs text-gray-400 dark:text-gray-500">
           No nodes configured
         </div>
         <div class="max-h-64 overflow-y-auto space-y-2" x-show="nodes.length > 0">
@@ -206,7 +228,7 @@
             <div class="flex items-center justify-between gap-2">
               <div class="min-w-0">
                 <div class="font-semibold truncate" x-text="n.name || n.id"></div>
-                <div class="text-gray-500 truncate" x-text="nodeSubtitle(n)"></div>
+                <div class="text-gray-500 dark:text-gray-400 truncate" x-text="nodeSubtitle(n)"></div>
               </div>
               <div class="flex items-center gap-1.5 shrink-0">
                 <span class="text-gray-400" x-text="(n.window_count || 0) + ' windows'"></span>
@@ -215,7 +237,7 @@
                       x-text="n.health"></span>
               </div>
             </div>
-            <div class="text-gray-400 mt-0.5" x-show="n.local_port || (n.kind === 'agent' && n.agent_port)">
+            <div class="text-gray-400 dark:text-gray-500 mt-0.5" x-show="n.local_port || (n.kind === 'agent' && n.agent_port)">
               <span x-show="n.local_port" x-text="'127.0.0.1:' + n.local_port"></span>
               <span x-show="!n.local_port && n.kind === 'agent' && n.agent_port" x-text="'127.0.0.1:' + n.agent_port"></span>
             </div>
@@ -238,9 +260,9 @@
         </div>
         <div x-show="syncJobs.length || syncSkipped.length"
              x-transition
-             class="border rounded p-3 text-xs">
+             class="border dark:border-gray-700 dark:bg-gray-800 rounded p-3 text-xs">
           <div class="flex items-center justify-between gap-2">
-            <span class="font-semibold text-gray-700">Node sync</span>
+            <span class="font-semibold text-gray-700 dark:text-gray-200">Node sync</span>
             <span class="text-[11px] text-gray-500" x-text="syncSummary()"></span>
           </div>
           <div class="mt-2 space-y-1">
@@ -253,7 +275,7 @@
               </div>
             </template>
             <template x-for="row in syncSkipped" :key="row.id + ':' + row.reason">
-              <div class="flex items-center gap-2 text-gray-400">
+              <div class="flex items-center gap-2 text-gray-400 dark:text-gray-500">
                 <span class="min-w-0 flex-1 truncate" x-text="row.id || 'unknown'"></span>
                 <span class="shrink-0" x-text="row.reason"></span>
               </div>
@@ -264,42 +286,42 @@
       <div class="lg:col-span-1 border rounded p-3">
         <h3 class="text-xs font-semibold mb-2">Launch managed process</h3>
         <div class="grid grid-cols-2 gap-2 text-xs">
-          <select class="border rounded px-2 py-1" x-model="launchForm.node_id" @change="handleLaunchNodeChange()" :disabled="nodes.length === 0">
+          <select class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" x-model="launchForm.node_id" @change="handleLaunchNodeChange()" :disabled="nodes.length === 0">
             <option value="" x-show="nodes.length === 0">No nodes</option>
             <template x-for="n in nodes" :key="n.id">
               <option :value="n.id" x-text="n.name || n.id"></option>
             </template>
           </select>
-          <select class="border rounded px-2 py-1" x-model="launchForm.platform" @change="handleLaunchPlatformChange()">
+          <select class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" x-model="launchForm.platform" @change="handleLaunchPlatformChange()">
             <option value="codex">codex</option>
             <option value="claude">claude</option>
           </select>
           <div class="col-span-2 flex gap-2">
-            <input class="border rounded px-2 py-1 flex-1 min-w-0" placeholder="working directory (blank = home)"
+            <input class="border dark:border-gray-600 rounded px-2 py-1 flex-1 min-w-0 dark:bg-gray-700 dark:text-gray-200" placeholder="working directory (blank = home)"
                    x-model="launchForm.cwd" @keydown.enter.prevent="openPathBrowser()">
             <button @click="togglePathBrowser()"
-                    class="border border-slate-300 text-slate-700 rounded px-2 py-1 hover:bg-slate-50"
+                    class="border border-slate-300 dark:border-gray-600 text-slate-700 dark:text-gray-300 rounded px-2 py-1 hover:bg-slate-50 dark:hover:bg-gray-700"
                     x-text="pathBrowser.open ? 'Hide' : 'Browse'"></button>
           </div>
-          <input class="border rounded px-2 py-1 col-span-2"
+          <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200"
                  :placeholder="'terminal name (blank = ' + (selectedLaunchNodeName() || 'auto') + ')'"
                  x-model="launchForm.name">
-          <input class="border rounded px-2 py-1 col-span-2" :placeholder="'command, e.g. ' + launchForm.platform" x-model="launchForm.command">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" :placeholder="'command, e.g. ' + launchForm.platform" x-model="launchForm.command">
           <div x-show="pathBrowser.open"
                x-transition
-               class="col-span-2 overflow-hidden rounded border border-gray-200 bg-slate-50">
-            <div class="flex items-center gap-2 border-b border-gray-200 px-2 py-1">
+               class="col-span-2 overflow-hidden rounded border border-gray-200 dark:border-gray-600 bg-slate-50 dark:bg-gray-800">
+            <div class="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 px-2 py-1">
               <button @click="loadPath(pathBrowser.parent)"
                       :disabled="!pathBrowser.parent || pathBrowser.loading"
-                      class="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Up</button>
+                      class="rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40">Up</button>
               <button @click="loadPath(pathBrowser.home)"
                       :disabled="!pathBrowser.home || pathBrowser.loading"
-                      class="rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Home</button>
-              <div class="min-w-0 flex-1 truncate font-mono text-[11px] text-gray-600"
+                      class="rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40">Home</button>
+              <div class="min-w-0 flex-1 truncate font-mono text-[11px] text-gray-600 dark:text-gray-300"
                    x-text="pathBrowser.path || 'Loading...'"></div>
               <button @click="launchNewDirOpen = true; launchNewDirName = ''; launchNewDirError = ''; $nextTick(() => $refs.launchNewDirInput?.focus())"
                       :disabled="!pathBrowser.path || pathBrowser.loading"
-                      class="rounded border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+                      class="rounded border border-emerald-200 bg-white dark:bg-gray-700 px-2 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 disabled:opacity-40">
                 New Dir</button>
               <button @click="pathBrowser.open = false"
                       class="text-gray-400 hover:text-gray-700">&times;</button>
@@ -310,7 +332,7 @@
               <div class="flex items-center gap-2">
                 <span class="text-[11px] font-semibold text-emerald-700 shrink-0">New Dir:</span>
                 <input x-ref="launchNewDirInput"
-                       class="min-w-0 flex-1 rounded border border-emerald-300 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
+                       class="min-w-0 flex-1 rounded border border-emerald-300 bg-white dark:bg-gray-700 px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
                        placeholder="folder name"
                        x-model="launchNewDirName"
                        @keydown.escape.prevent="launchNewDirOpen = false; launchNewDirError = ''"
@@ -326,7 +348,7 @@
               </div>
               <div x-show="launchNewDirError" class="mt-1 truncate text-[11px] text-red-600" x-text="launchNewDirError"></div>
             </div>
-            <div class="max-h-56 overflow-y-auto bg-white">
+            <div class="max-h-56 overflow-y-auto bg-white dark:bg-gray-800">
               <div x-show="pathBrowser.loading" class="px-3 py-4 text-xs text-gray-400">Loading path...</div>
               <div x-show="pathBrowser.error && !pathBrowser.loading"
                    class="px-3 py-3 text-xs text-red-600"
@@ -336,11 +358,11 @@
               <template x-for="entry in pathBrowser.entries" :key="entry.path + ':' + entry.name">
                 <button @click="selectLaunchPath(entry)"
                         :disabled="entry.kind !== 'directory' || !entry.readable"
-                        class="flex w-full items-center gap-2 border-b border-gray-100 px-3 py-2 text-left text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">
+                        class="flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-45">
                   <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
                         :class="fileBadgeClass(entry)"
                         x-text="fileBadgeLabel(entry)"></span>
-                  <span class="min-w-0 flex-1 truncate text-gray-800" x-text="entry.name"></span>
+                  <span class="min-w-0 flex-1 truncate text-gray-800 dark:text-gray-200" x-text="entry.name"></span>
                   <span class="shrink-0 text-[10px] text-gray-400" x-show="entry.error" x-text="entry.error"></span>
                 </button>
               </template>
@@ -364,7 +386,7 @@
   </div>
 
   <!-- ===== Search results ===== -->
-  <div x-show="searchResults !== null" class="mb-4 bg-white rounded-xl shadow-sm border p-4" x-transition>
+  <div x-show="searchResults !== null" class="mb-4 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow-sm border p-4" x-transition>
     <div class="flex items-center justify-between mb-3">
       <h2 class="font-semibold text-sm">
         "<span x-text="searchQuery" class="text-blue-600"></span>"
@@ -374,21 +396,21 @@
     </div>
     <div class="divide-y max-h-96 overflow-y-auto">
       <template x-for="hit in (searchResults||[])" :key="(hit.node_id || 'local') + ':' + hit.path + ':' + hit.line">
-        <div class="py-2 text-sm cursor-pointer hover:bg-gray-50"
+        <div class="py-2 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700"
              @click="openTimelineForHit(hit)">
           <div class="flex items-center gap-2 text-xs text-gray-500">
-            <span class="bg-gray-100 rounded px-1" x-text="hit.node_name || hit.node_id || 'local'"></span>
+            <span class="bg-gray-100 dark:bg-gray-700 rounded px-1" x-text="hit.node_name || hit.node_id || 'local'"></span>
             <span class="px-1 rounded text-white text-[10px]"
                   :class="hit.platform==='codex' ? 'bg-green-500' : 'bg-blue-500'"
                   x-text="hit.platform"></span>
             <span x-text="hit.ts?.slice(0,19) || ''"></span>
             <span class="bg-gray-100 rounded px-1" x-text="hit.project_slug?.slice(0,30)"></span>
           </div>
-          <p class="mt-0.5 text-gray-700" x-text="hit.excerpt"></p>
+          <p class="mt-0.5 text-gray-700 dark:text-gray-300" x-text="hit.excerpt"></p>
           <!-- Context trace -->
-          <div x-show="hit.context?.length" class="mt-1 ml-2 border-l-2 border-gray-200 pl-2 space-y-0.5">
+          <div x-show="hit.context?.length" class="mt-1 ml-2 border-l-2 border-gray-200 dark:border-gray-600 pl-2 space-y-0.5">
             <template x-for="ctx in (hit.context||[])" :key="ctx.line">
-              <div class="text-xs" :class="ctx.is_match ? 'font-medium text-gray-900 bg-yellow-50 -ml-2 pl-2 border-l-2 border-yellow-400' : 'text-gray-400'">
+              <div class="text-xs" :class="ctx.is_match ? 'font-medium text-gray-900 dark:text-gray-100 bg-yellow-50 -ml-2 pl-2 border-l-2 border-yellow-400' : 'text-gray-400 dark:text-gray-500'">
                 <span class="text-[10px] font-mono mr-1"
                       :class="{'text-blue-500': ctx.type==='user', 'text-emerald-500': ctx.type==='assistant', 'text-amber-500': ctx.type?.startsWith('codex')}"
                       x-text="ctx.type"></span>
@@ -404,7 +426,7 @@
   <!-- ===== Window cards ===== -->
   <div class="flex flex-wrap items-start gap-2">
     <template x-for="w in filteredWindows" :key="windowKey(w)">
-      <div class="w-full bg-white rounded-lg shadow-sm border hover:shadow-md transition cursor-pointer relative"
+      <div class="w-full bg-white dark:bg-gray-800 dark:border-gray-700 rounded-lg shadow-sm border hover:shadow-md transition cursor-pointer relative"
            :class="{ 'ring-2 ring-red-400': w.triage === 'waiting', 'ring-2 ring-blue-400': w.triage !== 'waiting' && (isTerminalWindow(w) || expandedPid === windowKey(w)), 'sm:w-72': !isWindowDetailsExpanded(w), 'sm:w-[30rem] lg:w-[34rem]': isWindowDetailsExpanded(w) }"
            @click="openPrimaryWindow(w)">
         <div class="flex items-center gap-2 px-3 py-2">
@@ -415,19 +437,19 @@
           <span class="text-[10px] px-1.5 rounded-full text-white shrink-0" :class="'triage-' + w.triage"
                 x-text="triageLabel(w)"></span>
           <button @click.stop="toggleWindowDetails(w)"
-                  class="shrink-0 rounded border border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-50 transition">
+                  class="shrink-0 rounded border border-gray-200 dark:border-gray-600 px-2 py-1 text-[10px] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
             <span x-text="isWindowDetailsExpanded(w) ? 'Collapse' : 'Expand'"></span></button>
         </div>
-        <div class="border-t border-gray-100 px-3 pb-3 pt-2 text-xs space-y-2"
+        <div class="border-t border-gray-100 dark:border-gray-700 px-3 pb-3 pt-2 text-xs space-y-2"
              x-show="isWindowDetailsExpanded(w)" x-transition @click.stop>
           <div x-show="renameWindowKey !== windowKey(w)" class="flex items-center justify-between gap-2">
             <div class="min-w-0">
-              <div class="font-semibold text-gray-800 truncate" x-text="w.name || w.first_input || w.project_name"></div>
-              <div class="text-[11px] text-gray-400 truncate" x-text="w.cwd"></div>
+              <div class="font-semibold text-gray-800 dark:text-gray-200 truncate" x-text="w.name || w.first_input || w.project_name"></div>
+              <div class="text-[11px] text-gray-400 dark:text-gray-500 truncate" x-text="w.cwd"></div>
             </div>
             <button x-show="canRenameWindow(w)"
                     @click="startRenameWindow(w)"
-                    class="shrink-0 rounded border border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-50"
+                    class="shrink-0 rounded border border-gray-200 dark:border-gray-600 px-2 py-1 text-[10px] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
                     title="Rename terminal">Edit</button>
           </div>
           <div x-show="renameWindowKey === windowKey(w)">
@@ -444,12 +466,12 @@
                         x-text="renamingWindowKey === windowKey(w) ? 'Saving...' : 'Save'"></button>
                 <button @click="cancelRenameWindow()"
                         :disabled="renamingWindowKey === windowKey(w)"
-                        class="rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+                        class="rounded border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">Cancel</button>
               </div>
             </div>
           </div>
           <div class="flex items-center gap-1 text-[10px] mb-1">
-            <span class="bg-gray-100 text-gray-500 px-1.5 rounded" x-text="w.node_name || w.node_id || 'local'"></span>
+            <span class="bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-1.5 rounded" x-text="w.node_name || w.node_id || 'local'"></span>
             <span class="px-1.5 rounded text-white"
                   :class="platformBadgeClass(w.platform || 'claude')"
                   x-text="w.platform || 'claude'"></span>
@@ -457,8 +479,8 @@
                   class="bg-amber-100 text-amber-700 px-1.5 rounded"
                   x-text="w.node_health"></span>
           </div>
-          <div class="text-gray-600 truncate" x-show="w.current_task" x-text="w.current_task"></div>
-          <div class="text-gray-500 italic" x-text="w.triage_reason"></div>
+          <div class="text-gray-600 dark:text-gray-400 truncate" x-show="w.current_task" x-text="w.current_task"></div>
+          <div class="text-gray-500 dark:text-gray-400 italic" x-text="w.triage_reason"></div>
           <!-- Review verdict -->
           <div x-show="reviewVerdicts[windowKey(w)]"
                class="bg-blue-50 border border-blue-200 rounded p-2 text-xs text-blue-800 max-h-32 overflow-y-auto whitespace-pre-wrap"
@@ -483,18 +505,18 @@
                     x-text="(m.operation === 'read' ? '↓' : '↑') + m.name"></span>
             </template>
           </div>
-          <div class="text-gray-400">
+          <div class="text-gray-400 dark:text-gray-500">
             <span x-text="formatIdle(w.idle_seconds)"></span> ·
             pid <span x-text="w.pid"></span>
           </div>
           <div class="flex gap-2 flex-wrap pt-1">
             <button x-show="!isBashWindow(w)"
                   @click="toggleTimeline(w)"
-                  class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition">
+                  class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition">
               Timeline</button>
             <button x-show="w.tmux_session"
                     @click="openTerminal(w)"
-                    class="text-xs border border-slate-300 text-slate-700 px-2 py-1 rounded hover:bg-slate-50 transition">
+                    class="text-xs border border-slate-300 dark:border-gray-600 text-slate-700 dark:text-gray-300 px-2 py-1 rounded hover:bg-slate-50 dark:hover:bg-gray-700 transition">
               Terminal</button>
             <button x-show="w.triage === 'stalled' && (w.platform || 'claude') === 'claude'"
                     @click="reviewWindow(w)"
@@ -520,7 +542,7 @@
   <!-- ===== Managed terminal panel ===== -->
   <div x-ref="terminalPanel"
        x-show="terminalWindow"
-       :class="terminalZoom ? 'fixed top-9 left-0 right-0 bottom-0 z-40 bg-white p-3 flex flex-col' : 'mt-6 scroll-mt-24 bg-white rounded-xl shadow border p-5'"
+       :class="terminalZoom ? 'fixed top-9 left-0 right-0 bottom-0 z-40 bg-white dark:bg-gray-900 p-3 flex flex-col' : 'mt-6 scroll-mt-24 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow border p-5'"
        x-transition>
     <div class="flex items-center justify-between mb-3" :class="terminalZoom ? 'mb-1 gap-2' : ''">
       <div class="min-w-0 flex items-center gap-2">
@@ -536,22 +558,22 @@
           <span class="text-gray-300 mx-1 select-none">|</span>
           <button @click="setTerminalTab('terminal')"
                   class="text-xs border px-2 py-1 rounded"
-                  :class="terminalPanelTab === 'terminal' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
+                  :class="terminalPanelTab === 'terminal' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'">
             Terminal</button>
           <button @click="setTerminalTab('editor')"
                   class="text-xs border px-2 py-1 rounded"
-                  :class="terminalPanelTab === 'editor' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50'">
+                  :class="terminalPanelTab === 'editor' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'">
             Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
           <span class="text-[11px] text-gray-400" x-show="terminalPanelTab === 'editor'" x-text="editor.path || 'No file selected'"></span>
         </div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <button @click="sendTerminalKey('Enter')"
-                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Enter</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Enter</button>
         <button @click="copyTerminalSelection()"
-                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Copy</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Copy</button>
         <button @click="pasteTerminalClipboard()"
-                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Paste</button>
+                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Paste</button>
         <button @click="terminateTerminalWindow()"
                 class="text-xs border border-red-300 text-red-700 px-2 py-1 rounded hover:bg-red-50">Terminate</button>
         <button @click="sendTerminalKey('C-c')"
@@ -565,19 +587,19 @@
                 x-text="terminalZoom ? 'Unzoom' : 'Zoom'"></button>
         <button @click="reconnectTerminal()"
                 class="text-xs border px-2 py-1 rounded"
-                :class="terminalWindow?.triage === 'completed' ? 'border-green-300 text-green-600 hover:bg-green-50' : 'border-gray-200 text-gray-600 hover:bg-gray-50'"
+                :class="terminalWindow?.triage === 'completed' ? 'border-green-300 text-green-600 hover:bg-green-50' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'"
                 x-text="terminalWindow?.triage === 'completed' ? 'Start' : 'Reconnect'"></button>
         <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
       </div>
     </div>
-    <div x-show="!terminalZoom" class="mb-3 flex items-center gap-1 border-b border-gray-200">
+    <div x-show="!terminalZoom" class="mb-3 flex items-center gap-1 border-b border-gray-200 dark:border-gray-700">
       <button @click="setTerminalTab('terminal')"
               class="border-x border-t px-3 py-1.5 text-xs"
-              :class="terminalPanelTab === 'terminal' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white text-gray-500 border-gray-200 hover:bg-gray-50'">
+              :class="terminalPanelTab === 'terminal' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
         Terminal</button>
       <button @click="setTerminalTab('editor')"
               class="border-x border-t px-3 py-1.5 text-xs"
-              :class="terminalPanelTab === 'editor' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white text-gray-500 border-gray-200 hover:bg-gray-50'">
+              :class="terminalPanelTab === 'editor' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
         Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
       <span class="min-w-0 flex-1 truncate px-2 text-[11px] text-gray-400" x-text="terminalPanelTab === 'editor' ? (editor.path || 'No file selected') : ''"></span>
     </div>
@@ -592,37 +614,37 @@
              x-transition:leave="transition ease-in duration-150"
              x-transition:leave-start="opacity-100 translate-x-0"
              x-transition:leave-end="opacity-0 -translate-x-4"
-             class="w-[19rem] shrink-0 flex flex-col overflow-hidden rounded-l border-y border-l border-gray-200 bg-slate-50"
+             class="w-[19rem] shrink-0 flex flex-col overflow-hidden rounded-l border-y border-l border-gray-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-800"
              :class="terminalZoom ? 'h-full' : 'min-h-[30rem] lg:h-full'">
         <!-- sidebar view toggle (zoom only) -->
-        <div x-show="terminalZoom" class="flex items-center bg-gray-50 border-b border-gray-200">
+        <div x-show="terminalZoom" class="flex items-center bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
           <button @click="sidebarView = 'files'"
                   class="flex-1 text-xs py-1.5 transition"
-                  :class="sidebarView === 'files' ? 'bg-white text-gray-800 font-semibold border-b-2 border-blue-400' : 'text-gray-500 hover:bg-gray-100'">
+                  :class="sidebarView === 'files' ? 'bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 font-semibold border-b-2 border-blue-400' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'">
             Files</button>
           <button @click="sidebarView = 'terminals'"
                   class="flex-1 text-xs py-1.5 transition"
-                  :class="sidebarView === 'terminals' ? 'bg-white text-gray-800 font-semibold border-b-2 border-blue-400' : 'text-gray-500 hover:bg-gray-100'">
+                  :class="sidebarView === 'terminals' ? 'bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 font-semibold border-b-2 border-blue-400' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'">
             Terminals</button>
         </div>
         <!-- file toolbar -->
-        <div class="flex items-center gap-1.5 border-b border-gray-200 px-2 py-2" x-show="!terminalZoom || sidebarView === 'files'">
+        <div class="flex items-center gap-1.5 border-b border-gray-200 dark:border-gray-700 px-2 py-2" x-show="!terminalZoom || sidebarView === 'files'">
           <button @click="loadTerminalPath(terminalExplorer.parent)"
                   :disabled="!terminalExplorer.parent || terminalExplorer.loading"
-                  class="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Up</button>
+                  class="rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-1.5 py-0.5 text-[11px] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40">Up</button>
           <button @click="loadTerminalPath(terminalExplorer.home)"
                   :disabled="!terminalExplorer.home || terminalExplorer.loading"
-                  class="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Home</button>
+                  class="rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-1.5 py-0.5 text-[11px] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40">Home</button>
           <button @click="loadTerminalPath(terminalExplorer.path || terminalWindow?.cwd || '')"
                   :disabled="terminalExplorer.loading"
-                  class="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-40">Refresh</button>
+                  class="rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-1.5 py-0.5 text-[11px] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40">Refresh</button>
           <button @click="$refs.terminalUploadInput?.click()"
                   :disabled="!terminalExplorer.path || terminalExplorer.loading || terminalExplorer.uploading"
-                  class="rounded border border-blue-200 bg-white px-1.5 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 disabled:opacity-40"
+                  class="rounded border border-blue-200 bg-white dark:bg-gray-700 px-1.5 py-0.5 text-[11px] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40"
                   x-text="terminalExplorer.uploading ? 'Uploading...' : 'Upload'"></button>
           <button @click="newDirOpen = true; newDirName = ''; newDirError = ''; $nextTick(() => $refs.newDirInput?.focus())"
                   :disabled="!terminalExplorer.path || terminalExplorer.loading"
-                  class="rounded border border-emerald-200 bg-white px-1.5 py-0.5 text-[11px] text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+                  class="rounded border border-emerald-200 bg-white dark:bg-gray-700 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 disabled:opacity-40">
             New Dir</button>
           <input x-ref="terminalUploadInput"
                  type="file"
@@ -631,8 +653,8 @@
         </div>
         <!-- file browser -->
         <div x-show="!terminalZoom || sidebarView === 'files'" class="flex flex-col flex-1 min-h-0">
-        <div class="border-b border-gray-200 px-2 py-2">
-          <input class="w-full rounded border border-gray-200 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-slate-400 focus:outline-none"
+        <div class="border-b border-gray-200 dark:border-gray-700 px-2 py-2">
+          <input class="w-full rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 font-mono text-[11px] text-gray-700 dark:text-gray-200 focus:border-slate-400 focus:outline-none"
                  placeholder="Path"
                  x-model="terminalExplorer.pathInput"
                  @keydown.enter.prevent="jumpTerminalPath()">
@@ -642,11 +664,11 @@
         </div>
         <div x-show="newDirOpen"
              x-transition
-             class="border-b border-emerald-200 bg-emerald-50 px-3 py-2">
+             class="border-b border-emerald-200 bg-emerald-50 dark:bg-emerald-900/30 px-3 py-2">
           <div class="flex items-center gap-2">
             <span class="text-[11px] font-semibold text-emerald-700 shrink-0">New Dir:</span>
             <input x-ref="newDirInput"
-                   class="min-w-0 flex-1 rounded border border-emerald-300 bg-white px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
+                   class="min-w-0 flex-1 rounded border border-emerald-300 bg-white dark:bg-gray-700 px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
                    placeholder="folder name"
                    x-model="newDirName"
                    @keydown.escape.prevent="newDirOpen = false; newDirError = ''"
@@ -662,7 +684,7 @@
           </div>
           <div x-show="newDirError" class="mt-1 truncate text-[11px] text-red-600" x-text="newDirError"></div>
         </div>
-        <div class="overflow-y-auto bg-white"
+        <div class="overflow-y-auto bg-white dark:bg-gray-800"
              :class="terminalZoom ? 'flex-1 h-0' : 'h-96 lg:h-auto lg:flex-1'">
           <div x-show="terminalExplorer.loading" class="px-3 py-4 text-xs text-gray-400">Loading path...</div>
           <div x-show="terminalExplorer.error && !terminalExplorer.loading"
@@ -675,25 +697,25 @@
                     draggable="true"
                     @dragstart="startTerminalPathDrag($event, entry)"
                     :disabled="!entry.readable"
-                    class="group flex w-full items-center gap-2 border-b border-gray-100 px-3 py-2 text-left text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45">
+                    class="group flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-45">
               <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
                     :class="fileBadgeClass(entry)"
                     x-text="fileBadgeLabel(entry)"></span>
-              <span class="min-w-0 flex-1 truncate text-gray-800" x-text="entry.name"></span>
+              <span class="min-w-0 flex-1 truncate text-gray-800 dark:text-gray-200" x-text="entry.name"></span>
               <span class="shrink-0 text-[10px] text-gray-400" x-show="entry.error" x-text="entry.error"></span>
             </button>
           </template>
         </div>
         </div> <!-- end file browser -->
         <!-- terminal browser -->
-        <div x-show="terminalZoom && sidebarView === 'terminals'" class="flex-1 min-h-0 overflow-y-auto bg-white">
+        <div x-show="terminalZoom && sidebarView === 'terminals'" class="flex-1 min-h-0 overflow-y-auto bg-white dark:bg-gray-800">
           <div x-show="!windows.length" class="px-3 py-4 text-xs text-gray-400">No terminals</div>
           <template x-for="w in sortedTerminals" :key="windowKey(w)">
             <button @click="openTerminal(w)"
-                    class="flex w-full items-center gap-2 border-b border-gray-100 px-3 py-2 text-left text-xs hover:bg-slate-50 transition">
+                    class="flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 transition">
               <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0"
                     :class="w.triage === 'waiting' ? 'bg-red-500 pulse-red' : w.triage === 'stalled' ? 'bg-amber-500' : w.triage === 'completed' ? 'bg-blue-500' : w.triage === 'working' ? 'bg-emerald-500' : 'bg-gray-400'"></span>
-              <span class="min-w-0 flex-1 truncate text-gray-800" x-text="w.name || w.project_name || w.pid"></span>
+              <span class="min-w-0 flex-1 truncate text-gray-800 dark:text-gray-200" x-text="w.name || w.project_name || w.pid"></span>
               <span class="shrink-0 text-[10px] text-gray-400" x-text="w.node_name || w.node_id || ''"></span>
             </button>
           </template>
@@ -701,7 +723,7 @@
       </aside>
       <!-- gutter toggle -->
       <button @click="toggleTerminalSidebar()"
-              class="shrink-0 flex items-center bg-gray-100 hover:bg-gray-200 transition cursor-pointer border-0 p-0"
+              class="shrink-0 flex items-center bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition cursor-pointer border-0 p-0"
               :title="terminalSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'">
         <span class="text-[10px] text-gray-500 px-0.5 select-none"
               x-text="terminalSidebarOpen ? '<' : '>'"></span>
@@ -717,9 +739,9 @@
              @drop.prevent="dropTerminalPath($event)"></div>
         <!-- editor -->
         <div x-show="terminalPanelTab === 'editor'"
-               class="flex flex-1 min-h-0 flex-col overflow-hidden rounded-r border border-gray-200 bg-white">
-            <div class="flex items-center gap-2 border-b border-gray-200 px-3 py-2 text-xs">
-              <span class="min-w-0 flex-1 truncate font-mono text-gray-600" x-text="editor.path || 'Select a file from the left sidebar'"></span>
+               class="flex flex-1 min-h-0 flex-col overflow-hidden rounded-r border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+            <div class="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 px-3 py-2 text-xs">
+              <span class="min-w-0 flex-1 truncate font-mono text-gray-600 dark:text-gray-300" x-text="editor.path || 'Select a file from the left sidebar'"></span>
               <span x-show="editor.loading" class="text-gray-400">Loading...</span>
               <span x-show="editor.saving" class="text-gray-400">Saving...</span>
               <span x-show="editor.deleting" class="text-gray-400">Deleting...</span>
@@ -733,7 +755,7 @@
                       class="rounded border border-blue-200 px-2 py-1 text-blue-600 hover:bg-blue-50 disabled:opacity-40">Save</button>
             </div>
             <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
-            <textarea class="min-h-0 flex-1 resize-none border-0 p-3 font-mono text-xs leading-5 text-gray-800 outline-none"
+            <textarea class="min-h-0 flex-1 resize-none border-0 p-3 font-mono text-xs leading-5 text-gray-800 dark:text-gray-200 dark:bg-gray-800 outline-none"
                       x-model="editor.content"
                       @input="editor.dirty = true"
                       @keydown="handleEditorKeydown($event)"
@@ -747,11 +769,11 @@
   <!-- ===== Timeline panel ===== -->
   <div x-ref="timelinePanel"
        x-show="(expandedPid !== null && timelineData) || (expandedHistoryId && timelineData)"
-       class="mt-6 bg-white rounded-xl shadow border p-5" x-transition>
+       class="mt-6 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow border p-5" x-transition>
     <div class="flex items-center justify-between mb-4">
       <h2 class="font-semibold flex items-center gap-2">
         <span x-text="timelineData?.project_name || timelineData?.project_slug || ''"></span>
-        <span class="text-xs text-gray-400 font-normal" x-text="'session:' + (timelineData?.session_id || '').slice(0,8)"></span>
+        <span class="text-xs text-gray-400 dark:text-gray-500 font-normal" x-text="'session:' + (timelineData?.session_id || '').slice(0,8)"></span>
         <span x-show="timelineData?.platform === 'codex'" class="text-[10px] bg-green-500 text-white px-1.5 rounded">codex</span>
       </h2>
       <div class="flex items-center gap-2">
@@ -761,11 +783,11 @@
                 :class="showPlanHistory ? 'bg-purple-50' : ''">
           Plan · <span x-text="timelineData?.plan_history?.length || 0"></span> 版本</button>
         <button @click="expandedPid = null; expandedWindow = null; expandedHistoryId = null; timelineData = null; planData = null"
-                class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
+                class="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 text-lg">&times;</button>
       </div>
     </div>
     <!-- Plan version history -->
-    <div x-show="showPlanHistory && timelineData?.plan_history?.length" class="mb-4 bg-purple-50 rounded-lg p-4 border border-purple-200 text-sm" x-transition>
+    <div x-show="showPlanHistory && timelineData?.plan_history?.length" class="mb-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 border border-purple-200 dark:border-purple-700 text-sm" x-transition>
       <div class="flex items-center justify-between mb-3">
         <div class="flex items-center gap-2">
           <span class="font-semibold text-purple-800">Plan</span>
@@ -779,7 +801,7 @@
         <button @click="showPlanHistory = false" class="text-purple-400 hover:text-purple-700">&times;</button>
       </div>
       <!-- Current plan file (full, copyable) -->
-      <div x-show="planData" class="mb-3 bg-white border border-purple-300 rounded p-3">
+      <div x-show="planData" class="mb-3 bg-white dark:bg-gray-800 border border-purple-300 dark:border-purple-700 rounded p-3">
         <div class="flex items-center justify-between mb-2">
           <span class="font-medium text-purple-900 text-xs" x-text="planData?.plan?.name || ''"></span>
           <div class="flex gap-2">
@@ -789,13 +811,13 @@
             <button @click="planData = null" class="text-purple-400 hover:text-purple-700">&times;</button>
           </div>
         </div>
-        <textarea readonly class="w-full text-xs text-purple-900 max-h-80 font-mono p-2 border rounded bg-purple-50/30"
+        <textarea readonly class="w-full text-xs text-purple-900 dark:text-purple-300 max-h-80 font-mono p-2 border rounded bg-purple-50/30 dark:bg-purple-900/20"
                   rows="12" x-ref="planTextarea"
                   x-text="planData?.plan?.content || ''"></textarea>
       </div>
       <div class="space-y-2 max-h-[40vh] overflow-y-auto">
         <template x-for="(ph, idx) in (timelineData?.plan_history||[]).slice().reverse()" :key="idx">
-          <div class="border border-purple-200 rounded bg-white">
+          <div class="border border-purple-200 dark:border-purple-700 rounded bg-white dark:bg-gray-800">
             <div class="px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-purple-25"
                  @click="ph._expanded = !ph._expanded">
               <div class="flex items-center gap-2">
@@ -842,7 +864,7 @@
       </template>
     </div>
     <!-- Memory detail popup -->
-    <div x-show="memoryDetail" class="mb-3 bg-white border rounded-lg shadow-lg p-4 text-sm" x-transition>
+    <div x-show="memoryDetail" class="mb-3 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg shadow-lg p-4 text-sm" x-transition>
       <div class="flex items-center justify-between mb-2">
         <span class="font-semibold" x-text="memoryDetail?.name || ''"></span>
         <div class="flex items-center gap-2">
@@ -853,8 +875,8 @@
         </div>
       </div>
       <div class="text-xs text-gray-500 mb-2" x-text="memoryDetail?.description || ''"></div>
-      <div class="text-xs font-mono bg-gray-50 rounded p-2 mb-1">type: <span x-text="memoryDetail?.type || ''"></span></div>
-      <pre class="text-xs text-gray-700 max-h-48 overflow-y-auto whitespace-pre-wrap bg-gray-50 rounded p-2"
+      <div class="text-xs font-mono bg-gray-50 dark:bg-gray-700 rounded p-2 mb-1">type: <span x-text="memoryDetail?.type || ''"></span></div>
+      <pre class="text-xs text-gray-700 dark:text-gray-300 max-h-48 overflow-y-auto whitespace-pre-wrap bg-gray-50 dark:bg-gray-700 rounded p-2"
            x-text="memoryDetail?.content || '(loading...)'"></pre>
     </div>
     <div class="space-y-2 max-h-[32rem] overflow-y-auto">
@@ -869,7 +891,7 @@
                'border-pink-500': ev.kind==='memory_write',
                'border-gray-300': ev.kind==='tool_result'||ev.kind==='system'
              }">
-          <div class="flex items-center gap-2 text-xs text-gray-400 mb-0.5">
+          <div class="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500 mb-0.5">
             <span x-text="ev.ts?.slice(11,19) || ''"></span>
             <template x-if="ev.kind==='skill_invoke'">
               <span class="text-purple-600 font-medium">skill: <span x-text="ev.tool"></span></span>
@@ -903,7 +925,7 @@
             </div>
           </template>
           <template x-if="ev.kind !== 'tool_use'">
-            <pre class="text-xs text-gray-700 max-h-32 overflow-y-auto" x-text="ev.text?.slice(0,2000) || ''"></pre>
+            <pre class="text-xs text-gray-700 dark:text-gray-300 max-h-32 overflow-y-auto" x-text="ev.text?.slice(0,2000) || ''"></pre>
           </template>
         </div>
       </template>
@@ -911,13 +933,13 @@
   </div>
 
   <!-- ===== History section ===== -->
-  <div class="mt-8 bg-white rounded-xl shadow-sm border">
-    <div class="px-5 py-3 border-b flex items-center justify-between">
+  <div class="mt-8 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow-sm border">
+    <div class="px-5 py-3 border-b dark:border-gray-700 flex items-center justify-between">
       <h2 class="font-semibold text-sm">History (<span x-text="historyTotal"></span>)</h2>
       <div class="flex items-center gap-2">
         <button @click="showHistory = true; loadHistory(1)"
-                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50">Refresh</button>
-        <select x-model="historyNode" @change="showHistory = true; loadHistory(1)" class="border rounded px-1 py-1 text-xs bg-white">
+                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Refresh</button>
+        <select x-model="historyNode" @change="showHistory = true; loadHistory(1)" class="border dark:border-gray-600 rounded px-1 py-1 text-xs bg-white dark:bg-gray-700 dark:text-gray-200">
           <option value="">All nodes</option>
           <template x-for="n in nodes" :key="n.id">
             <option :value="n.id" x-text="n.name || n.id"></option>
@@ -925,10 +947,10 @@
         </select>
         <input type="text" placeholder="Search history..." x-model="historyQuery"
                @keydown.enter="showHistory = true; loadHistory(1)"
-               class="border rounded px-2 py-1 text-xs w-48 focus:outline-none focus:ring-1 focus:ring-blue-400">
+               class="border dark:border-gray-600 rounded px-2 py-1 text-xs w-48 focus:outline-none focus:ring-1 focus:ring-blue-400 dark:bg-gray-700 dark:text-gray-200">
         <button @click="showHistory = true; loadHistory(1)" class="text-xs text-blue-600 hover:underline">Go</button>
         <button @click="historyQuery=''; showHistory = true; loadHistory(1)" class="text-xs text-gray-400 hover:text-gray-600" x-show="historyQuery">Clear</button>
-        <select x-model.number="historyLimit" @change="showHistory = true; loadHistory(1)" class="border rounded px-1 py-1 text-xs bg-white">
+        <select x-model.number="historyLimit" @change="showHistory = true; loadHistory(1)" class="border dark:border-gray-600 rounded px-1 py-1 text-xs bg-white dark:bg-gray-700 dark:text-gray-200">
           <option value="10">10</option>
           <option value="20">20</option>
           <option value="50">50</option>
@@ -936,13 +958,13 @@
           <option value="500">All</option>
         </select>
         <button @click="showHistory = !showHistory"
-                class="text-xs border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-50"
+                class="text-xs border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
                 x-text="showHistory ? 'Hide' : 'Show'"></button>
       </div>
     </div>
     <div class="divide-y max-h-[28rem] overflow-y-auto" x-show="showHistory && historySessions.length > 0">
       <template x-for="s in historySessions" :key="s.session_key || s.session_id">
-        <div class="px-5 py-3 hover:bg-gray-50 cursor-pointer flex items-start gap-3 text-sm"
+        <div class="px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer flex items-start gap-3 text-sm"
              @click="openHistoryTimeline(s)">
           <span class="mt-1 inline-block w-2 h-2 rounded-full shrink-0"
                 :class="s.is_alive ? 'bg-emerald-500' : 'bg-gray-300'"></span>
@@ -952,9 +974,9 @@
               <span class="px-1 rounded text-white text-[10px]"
                     :class="s.platform==='codex' ? 'bg-green-500' : 'bg-blue-500'"
                     x-text="s.platform || 'claude'"></span>
-              <span class="font-medium text-gray-800 truncate" x-text="s.first_input?.slice(0,80) || s.session_id.slice(0,8)"></span>
+              <span class="font-medium text-gray-800 dark:text-gray-200 truncate" x-text="s.first_input?.slice(0,80) || s.session_id.slice(0,8)"></span>
             </div>
-            <div class="flex items-center gap-3 text-xs text-gray-400 mt-0.5 flex-wrap">
+            <div class="flex items-center gap-3 text-xs text-gray-400 dark:text-gray-500 mt-0.5 flex-wrap">
               <span x-text="s.project_name"></span>
               <span x-show="s.model" class="text-gray-400" x-text="s.model?.split('/').pop()?.split('-').slice(0,3).join('-')"></span>
               <span x-text="s.first_ts?.slice(0,10) || ''"></span>
@@ -972,17 +994,17 @@
             <!-- Match snippets (VS Code-style) -->
             <div x-show="s.match_snippets?.length" class="mt-1 space-y-0.5">
               <template x-for="(snip, si) in (s.match_snippets||[])" :key="si">
-                <div class="text-[11px] text-gray-500 bg-gray-50 rounded px-2 py-0.5 font-mono truncate"
+                <div class="text-[11px] text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 rounded px-2 py-0.5 font-mono truncate"
                      x-text="snip"></div>
               </template>
             </div>
           </div>
           <div class="flex gap-1 shrink-0" @click.stop>
             <button x-show="s.is_alive" @click="resumeSession(s)"
-                    class="text-xs border border-gray-200 text-gray-500 px-2 py-0.5 rounded hover:bg-gray-100">
+                    class="text-xs border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
               Focus</button>
             <button x-show="!s.is_alive" @click="resumeSession(s)"
-                    class="text-xs border border-gray-200 text-gray-500 px-2 py-0.5 rounded hover:bg-gray-100">
+                    class="text-xs border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
               Resume</button>
             <button x-show="!s.is_alive" @click="forkHistorySession(s)"
                     class="text-xs border border-green-200 text-green-600 px-2 py-0.5 rounded hover:bg-green-50">
@@ -991,14 +1013,14 @@
         </div>
       </template>
     </div>
-    <div class="px-5 py-2 border-t flex items-center justify-between text-xs text-gray-500"
+    <div class="px-5 py-2 border-t dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400"
          x-show="showHistory && historyTotal > historyLimit">
       <span>Page <span x-text="historyPage"></span> / <span x-text="Math.ceil(historyTotal / historyLimit)"></span></span>
       <div class="flex gap-2">
         <button @click="loadHistory(historyPage - 1)" :disabled="historyPage <= 1"
-                class="px-2 py-1 border rounded disabled:opacity-30 hover:bg-gray-100">Prev</button>
+                class="px-2 py-1 border dark:border-gray-600 rounded disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-gray-700">Prev</button>
         <button @click="loadHistory(historyPage + 1)" :disabled="historyPage * historyLimit >= historyTotal"
-                class="px-2 py-1 border rounded disabled:opacity-30 hover:bg-gray-100">Next</button>
+                class="px-2 py-1 border dark:border-gray-600 rounded disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-gray-700">Next</button>
       </div>
     </div>
   </div>
@@ -1049,6 +1071,8 @@ function superCliTerminal() {
     nodes: [],
     sshHistory: [],
     showNodes: false,
+    showSettings: false,
+    theme: 'light',
     localEnabled: false,
     enablingLocal: false,
     terminalWindow: null,
@@ -1115,7 +1139,6 @@ function superCliTerminal() {
       host: '',
       user: '',
       password: '',
-      remember_password: true,
       ssh_port: 22,
       agent_port: '',
       python_command: 'auto',
@@ -1193,6 +1216,7 @@ function superCliTerminal() {
     },
 
     init() {
+      this.loadTheme();
       fetch('/api/windows').then(r => r.json()).then(d => this.applySnapshot(d));
       this.refreshNodes();
       this.loadHistory(1);
@@ -1223,6 +1247,19 @@ function superCliTerminal() {
       if (!h) return;
       if (h.startsWith('search=')) { this.searchQuery = h.slice(7); this.doSearch(); }
       else if (h.startsWith('timeline=')) { this.openHistoryTimeline(h.slice(9)); }
+    },
+
+    loadTheme() {
+      try {
+        const saved = localStorage.getItem('lucid-theme');
+        if (saved === 'dark' || saved === 'light') this.theme = saved;
+      } catch (_) {}
+      document.documentElement.classList.toggle('dark', this.theme === 'dark');
+    },
+
+    saveTheme() {
+      try { localStorage.setItem('lucid-theme', this.theme); } catch (_) {}
+      document.documentElement.classList.toggle('dark', this.theme === 'dark');
     },
 
     applySnapshot(snap) {
@@ -2464,8 +2501,7 @@ function superCliTerminal() {
         !f.password &&
         (Number(f.ssh_port || 22) === 22) &&
         agentPort === 0 &&
-        (!f.remote_dir || f.remote_dir === defaultRemote) &&
-        (!f.python_command || f.python_command === 'auto');
+        (!f.remote_dir || f.remote_dir === defaultRemote);
     },
 
     applySshHistory(row, notify = true) {
@@ -2474,8 +2510,7 @@ function superCliTerminal() {
       this.deployForm.node_name = row.node_name || '';
       this.deployForm.host = row.host || '';
       this.deployForm.user = row.user || '';
-      this.deployForm.password = row.password || '';
-      this.deployForm.remember_password = true;
+      this.deployForm.password = '';
       this.deployForm.ssh_port = row.ssh_port || 22;
       this.deployForm.agent_port = row.agent_port || '';
       this.deployForm.python_command = row.python_command || 'auto';
@@ -2658,9 +2693,7 @@ function superCliTerminal() {
       }
       this.deploying = true;
       const payload = { ...this.deployForm };
-      if (!payload.remember_password) {
-        this.deployForm.password = '';
-      }
+      this.deployForm.password = '';
       this.deployStatus = {
         job_id: '',
         status: 'starting',
