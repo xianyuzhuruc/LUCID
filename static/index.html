@@ -32,7 +32,7 @@
 
 <!-- ===== Top bar: windows that need attention ===== -->
 <div class="sticky top-0 z-50 bg-slate-900 text-white px-4 py-2 shadow-lg flex items-center gap-3 text-sm"
-     x-show="attentionWindows.length > 0" x-transition>
+     x-show="attentionWindows.length > 0 || terminalZoom" x-transition>
   <span class="font-bold shrink-0">ATTENTION (<span x-text="attentionWindows.length"></span>)</span>
   <div class="flex gap-2 overflow-x-auto">
     <template x-for="w in attentionWindows" :key="windowKey(w)">
