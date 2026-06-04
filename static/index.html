@@ -445,6 +445,7 @@
                    class="px-3 py-4 text-xs text-gray-400">No entries</div>
               <template x-for="entry in pathBrowser.entries" :key="entry.path + ':' + entry.name">
                 <button @click="selectLaunchPath(entry)"
+                        @contextmenu.prevent="openContextMenu($event, entry)"
                         :disabled="entry.kind !== 'directory' || !entry.readable"
                         class="flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-45">
                   <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
@@ -643,16 +644,27 @@
         </div>
         <!-- tabs inline in zoom mode -->
         <div x-show="terminalZoom" class="flex items-center gap-1">
-          <span class="text-gray-300 mx-1 select-none">|</span>
+          <span class="text-gray-300 dark:text-gray-600 mx-1 select-none">|</span>
           <button @click="setTerminalTab('terminal')"
-                  class="text-xs border px-2 py-1 rounded"
+                  class="text-xs border px-2 py-1 rounded shrink-0"
                   :class="terminalPanelTab === 'terminal' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
             Terminal</button>
           <button @click="setTerminalTab('editor')"
-                  class="text-xs border px-2 py-1 rounded"
+                  class="text-xs border px-2 py-1 rounded shrink-0"
                   :class="terminalPanelTab === 'editor' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
-            Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
-          <span class="text-[11px] text-gray-400" x-show="terminalPanelTab === 'editor'" x-text="editor.path || 'No file selected'"></span>
+            Text Editor</button>
+          <!-- File sub-tabs -->
+          <template x-for="(tab, idx) in editorTabs" :key="tab.path">
+            <div class="text-xs border px-2 py-1 rounded shrink-0 flex items-center gap-1"
+                 :class="terminalPanelTab === 'editor' && activeEditorTab === idx
+                   ? 'border-slate-400 bg-slate-900 text-white'
+                   : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
+              <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="tabFileBase(tab.path)"></button>
+              <span x-show="tab.dirty" class="text-amber-300 shrink-0">*</span>
+              <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
+            </div>
+          </template>
+          <span class="text-[11px] text-gray-400 dark:text-gray-500" x-show="terminalPanelTab === 'editor'" x-text="editor.path || 'No file selected'"></span>
         </div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
@@ -680,16 +692,27 @@
         <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
       </div>
     </div>
-    <div x-show="!terminalZoom" class="mb-3 flex items-center gap-1 border-b border-gray-200 dark:border-gray-700">
+    <div x-show="!terminalZoom" class="mb-3 flex items-center gap-0.5 border-b border-gray-200 dark:border-gray-700">
       <button @click="setTerminalTab('terminal')"
-              class="border-x border-t px-3 py-1.5 text-xs"
+              class="border-x border-t px-3 py-1.5 text-xs shrink-0"
               :class="terminalPanelTab === 'terminal' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
         Terminal</button>
       <button @click="setTerminalTab('editor')"
-              class="border-x border-t px-3 py-1.5 text-xs"
+              class="border-x border-t px-3 py-1.5 text-xs shrink-0"
               :class="terminalPanelTab === 'editor' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
-        Text Editor<span x-show="editor.dirty" class="ml-1 text-amber-300">*</span></button>
-      <span class="min-w-0 flex-1 truncate px-2 text-[11px] text-gray-400" x-text="terminalPanelTab === 'editor' ? (editor.path || 'No file selected') : ''"></span>
+        Text Editor</button>
+      <!-- File sub-tabs -->
+      <template x-for="(tab, idx) in editorTabs" :key="tab.path">
+        <div class="border-x border-t px-2 py-1.5 text-xs shrink-0 flex items-center gap-1 rounded-t"
+             :class="terminalPanelTab === 'editor' && activeEditorTab === idx
+               ? 'bg-slate-900 text-white border-slate-900'
+               : 'bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
+          <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="tabFileBase(tab.path)"></button>
+          <span x-show="tab.dirty" class="text-amber-300 shrink-0">*</span>
+          <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
+        </div>
+      </template>
+      <span class="min-w-0 flex-1 truncate px-2 text-[11px] text-gray-400 dark:text-gray-500" x-text="terminalPanelTab === 'editor' ? (editor.path || 'No file selected') : ''"></span>
     </div>
     <!-- sidebar + content area -->
     <div class="flex gap-0"
@@ -784,6 +807,7 @@
             <button @click="selectTerminalPath(entry)"
                     draggable="true"
                     @dragstart="startTerminalPathDrag($event, entry)"
+                    @contextmenu.prevent="openContextMenu($event, entry)"
                     :disabled="!entry.readable"
                     class="group flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-45">
               <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
@@ -836,11 +860,11 @@
               <span x-show="editor.dirty && !editor.saving && !editor.deleting" class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">modified</span>
               <button @click="deleteEditorFile()"
                       :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
-                      class="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-40"
+                      class="rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
                       x-text="editor.deleting ? 'Deleting...' : 'Delete'"></button>
               <button @click="saveEditorFile()"
                       :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
-                      class="rounded border border-blue-200 px-2 py-1 text-blue-600 hover:bg-blue-50 disabled:opacity-40">Save</button>
+                      class="rounded border border-blue-200 bg-white dark:bg-gray-700 px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40">Save</button>
             </div>
             <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
             <div class="relative flex-1 min-h-0 bg-white dark:bg-gray-800" x-ref="editorViewport">
@@ -1127,6 +1151,20 @@
   </div>
 </main>
 
+<!-- Context menu -->
+<div x-show="contextMenu.show"
+     @click.outside="contextMenu.show = false"
+     @keydown.escape.window="contextMenu.show = false"
+     class="fixed z-[100] bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg shadow-xl py-1 min-w-[9rem] text-xs"
+     :style="'left:' + contextMenu.x + 'px; top:' + contextMenu.y + 'px'">
+  <button @click="contextMenuRename()"
+          class="w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-gray-200 flex items-center gap-2">
+    <span>✏️</span> <span>Rename</span></button>
+  <button @click="contextMenuDelete()"
+          class="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2">
+    <span>🗑</span> <span>Delete</span></button>
+</div>
+
 <!-- Toast -->
 <div class="fixed bottom-4 right-4 z-50 space-y-2">
   <template x-for="t in toasts" :key="t.id">
@@ -1399,6 +1437,9 @@ function superCliTerminal() {
       dirty: false,
       error: '',
     },
+    editorTabs: [],
+    activeEditorTab: -1,
+    contextMenu: { show: false, x: 0, y: 0, entry: null },
     deletingNodeId: null,
     removingNodeId: null,
     deploying: false,
@@ -1999,6 +2040,110 @@ function superCliTerminal() {
       }
     },
 
+    tabFileBase(path) {
+      return (path || '').split('/').pop() || path || '';
+    },
+
+    openContextMenu(event, entry) {
+      this.contextMenu.entry = entry;
+      this.contextMenu.x = event.clientX;
+      this.contextMenu.y = event.clientY;
+      this.contextMenu.show = true;
+    },
+
+    async contextMenuRename() {
+      const entry = this.contextMenu.entry;
+      if (!entry) { this.contextMenu.show = false; return; }
+      const newName = prompt('Rename ' + entry.name + ' to:', entry.name);
+      if (!newName || newName === entry.name) { this.contextMenu.show = false; return; }
+      const nodeId = this.terminalWindow?.node_id || 'local';
+      try {
+        const r = await fetch('/api/nodes/' + encodeURIComponent(nodeId) + '/paths', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: entry.path, name: newName }),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) { this.toast('Rename failed: ' + (d.detail || d.error || '')); return; }
+        this.toast('Renamed ' + entry.name + ' → ' + newName);
+        if (this.terminalExplorer.path) await this.loadTerminalPath(this.terminalExplorer.path);
+        else if (this.pathBrowser.path) await this.loadPath(this.pathBrowser.path);
+      } catch (e) { this.toast('Rename failed: ' + String(e)); }
+      this.contextMenu.show = false;
+    },
+
+    async contextMenuDelete() {
+      const entry = this.contextMenu.entry;
+      if (!entry) { this.contextMenu.show = false; return; }
+      if (!confirm('Delete ' + entry.name + '?')) { this.contextMenu.show = false; return; }
+      const nodeId = this.terminalWindow?.node_id || 'local';
+      try {
+        const r = await fetch(this.nodeFileUrl(nodeId, entry.path), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) { this.toast('Delete failed: ' + (d.detail || d.error || '')); return; }
+        this.toast('Deleted ' + entry.name);
+        if (this.terminalExplorer.path) await this.loadTerminalPath(this.terminalExplorer.path);
+        else if (this.pathBrowser.path) await this.loadPath(this.pathBrowser.path);
+        // Close editor tab if deleted file is open
+        const tabIdx = this.editorTabs.findIndex(t => t.path === entry.path);
+        if (tabIdx >= 0) this.closeEditorTab(tabIdx);
+      } catch (e) { this.toast('Delete failed: ' + String(e)); }
+      this.contextMenu.show = false;
+    },
+
+    _saveActiveTab() {
+      if (this.activeEditorTab < 0 || this.activeEditorTab >= this.editorTabs.length) return;
+      const tab = this.editorTabs[this.activeEditorTab];
+      tab.content = this.editor.content;
+      tab.dirty = this.editor.dirty;
+    },
+
+    switchEditorTab(idx) {
+      if (idx < 0 || idx >= this.editorTabs.length) return;
+      this._saveActiveTab();
+      this.activeEditorTab = idx;
+      const tab = this.editorTabs[idx];
+      this.editor.path = tab.path;
+      this.editor.content = tab.content;
+      this.editor.originalContent = tab.originalContent;
+      this.editor.dirty = tab.dirty;
+      this.editor.error = '';
+      this.$nextTick(() => this.syncEditorHighlight());
+    },
+
+    closeEditorTab(idx) {
+      if (idx < 0 || idx >= this.editorTabs.length) return;
+      const tab = this.editorTabs[idx];
+      if (tab.dirty) {
+        if (!confirm('Discard unsaved changes to ' + this.tabFileBase(tab.path) + '?')) return;
+      }
+      // If closing the active tab, save current edits first
+      if (idx === this.activeEditorTab) {
+        this.editor.dirty = false; // prevent double confirm
+      }
+      this.editorTabs.splice(idx, 1);
+      if (this.editorTabs.length === 0) {
+        this.activeEditorTab = -1;
+        // Clear editor display but stay on editor panel
+        this.editor.path = '';
+        this.editor.content = '';
+        this.editor.originalContent = '';
+        this.editor.dirty = false;
+        this.editor.error = '';
+        const codeEl = this.$refs.editorHighlight;
+        if (codeEl) codeEl.innerHTML = '';
+        return;
+      }
+      // If the active tab was closed, switch to its neighbor
+      if (idx === this.activeEditorTab || this.activeEditorTab >= this.editorTabs.length) {
+        const newIdx = Math.min(idx, this.editorTabs.length - 1);
+        this.activeEditorTab = -1; // force reload
+        this.switchEditorTab(newIdx);
+      } else if (idx < this.activeEditorTab) {
+        this.activeEditorTab--;
+      }
+    },
+
     resetEditor() {
       if (this._highlightTimeout) clearTimeout(this._highlightTimeout);
       this._highlightTimeout = null;
@@ -2012,16 +2157,22 @@ function superCliTerminal() {
         dirty: false,
         error: '',
       };
+      this.editorTabs = [];
+      this.activeEditorTab = -1;
       const codeEl = this.$refs.editorHighlight;
       if (codeEl) codeEl.innerHTML = '';
     },
 
     async openEditorFile(path) {
       if (!this.terminalWindow || !path) return;
-      if (this.editor.dirty && this.editor.path && this.editor.path !== path) {
-        const ok = confirm('Discard unsaved editor changes?');
-        if (!ok) return;
+      // If already open, just switch to its tab
+      const existingIdx = this.editorTabs.findIndex(t => t.path === path);
+      if (existingIdx >= 0) {
+        this.terminalPanelTab = 'editor';
+        this.switchEditorTab(existingIdx);
+        return;
       }
+      this._saveActiveTab();
       this.terminalPanelTab = 'editor';
       this.editor.loading = true;
       this.editor.error = '';
@@ -2033,7 +2184,17 @@ function superCliTerminal() {
           return;
         }
         const content = d.content || '';
-        this.editor.path = d.path || path;
+        const filePath = d.path || path;
+        // Push new tab and activate it
+        const newIdx = this.editorTabs.length;
+        this.editorTabs.push({
+          path: filePath,
+          content: content,
+          originalContent: content,
+          dirty: false,
+        });
+        this.activeEditorTab = newIdx;
+        this.editor.path = filePath;
         this.editor.content = content;
         this.editor.originalContent = content;
         this.editor.dirty = false;
@@ -2061,7 +2222,9 @@ function superCliTerminal() {
           return;
         }
         const directory = d.directory || this.terminalExplorer.path || this.terminalWindow.cwd || '';
-        this.resetEditor();
+        // Close this tab (skip dirty confirm since file is deleted)
+        this.editor.dirty = false;
+        this.closeEditorTab(this.activeEditorTab);
         this.terminalPanelTab = 'editor';
         if (directory) await this.loadTerminalPath(directory);
         this.toast('Deleted ' + (d.name || path));
@@ -2097,6 +2260,8 @@ function superCliTerminal() {
         this.editor.path = d.path || this.editor.path;
         this.editor.originalContent = this.editor.content;
         this.editor.dirty = false;
+        // Sync tab state
+        this._saveActiveTab();
         this.toast('Saved ' + (d.name || this.editor.path));
       } catch (e) {
         this.editor.error = String(e);

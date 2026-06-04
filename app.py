@@ -464,7 +464,7 @@ def _local_file_write(payload: dict) -> dict:
     }
 
 
-def _local_file_delete(raw_path: str) -> dict:
+def _local_path_delete(raw_path: str) -> dict:
     path = _resolve_local_file(raw_path)
     directory = path.parent
     if not os.access(directory, os.W_OK | os.X_OK):
@@ -475,13 +475,36 @@ def _local_file_delete(raw_path: str) -> dict:
         "name": path.name,
         "directory": str(directory),
     }
-    try:
-        path.unlink()
-    except PermissionError as e:
-        raise HTTPException(403, f"file is not deletable: {path}") from e
-    except OSError as e:
-        raise HTTPException(400, f"file delete failed for {path}: {e}") from e
+    if path.is_dir():
+        import shutil
+        shutil.rmtree(path)
+    else:
+        try:
+            path.unlink()
+        except PermissionError as e:
+            raise HTTPException(403, f"path is not deletable: {path}") from e
+        except OSError as e:
+            raise HTTPException(400, f"delete failed for {path}: {e}") from e
     return result
+
+
+def _local_path_rename(payload: dict) -> dict:
+    path = Path(str(payload.get("path") or ""))
+    name = str(payload.get("name") or "")
+    if not name.strip():
+        raise HTTPException(400, "name is required")
+    if "/" in name or "\\" in name:
+        raise HTTPException(400, "invalid name")
+    if not path.exists():
+        raise HTTPException(404, f"path does not exist: {path}")
+    directory = path.parent
+    if not os.access(directory, os.W_OK | os.X_OK):
+        raise HTTPException(403, f"directory is not writable: {directory}")
+    target = directory / name
+    if target.exists():
+        raise HTTPException(409, f"target already exists: {target}")
+    path.rename(target)
+    return {"ok": True, "path": str(target.resolve(strict=True)), "name": name, "directory": str(directory)}
 
 
 def _local_path_create(payload: dict) -> dict:
@@ -1281,9 +1304,17 @@ def api_node_file_write(node_id: str, payload: dict = Body(...)) -> dict:
 def api_node_file_delete(node_id: str, path: str = "") -> dict:
     node = _configured_node(node_id)
     if node.kind == "local":
-        return _local_file_delete(path)
+        return _local_path_delete(path)
     query = urllib.parse.urlencode({"path": path})
     return nodes.forward(node_id, "DELETE", f"/agent/v1/files?{query}")
+
+
+@app.patch("/api/nodes/{node_id}/paths")
+def api_node_path_rename(node_id: str, payload: dict = Body(...)) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _local_path_rename(payload)
+    return nodes.forward(node_id, "PATCH", "/agent/v1/paths", payload)
 
 
 @app.post("/api/nodes/{node_id}/files/upload")
@@ -1818,7 +1849,13 @@ def agent_file_write(payload: dict = Body(...), authorization: str | None = Head
 @app.delete("/agent/v1/files")
 def agent_file_delete(path: str = "", authorization: str | None = Header(None)) -> dict:
     _require_agent_auth(authorization)
-    return _local_file_delete(path)
+    return _local_path_delete(path)
+
+
+@app.patch("/agent/v1/paths")
+def agent_path_rename(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _local_path_rename(payload)
 
 
 @app.post("/agent/v1/files/upload")
