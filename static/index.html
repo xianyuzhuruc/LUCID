@@ -543,7 +543,7 @@
           </div>
           <div x-show="renameWindowKey === windowKey(w)">
             <div class="min-w-0">
-              <input class="w-full rounded border border-blue-300 px-2 py-1 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-200"
+              <input class="w-full rounded border border-blue-300 dark:border-blue-600 px-2 py-1 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-200 dark:bg-gray-700 dark:text-gray-200"
                      x-model="renameWindowName"
                      @keydown.enter.prevent="saveWindowName(w)"
                      @keydown.escape.prevent="cancelRenameWindow()"
@@ -551,7 +551,7 @@
               <div class="mt-1 flex gap-1">
                 <button @click="saveWindowName(w)"
                         :disabled="renamingWindowKey === windowKey(w)"
-                        class="rounded border border-blue-200 px-1.5 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                        class="rounded border border-blue-200 dark:border-blue-600 bg-white dark:bg-gray-700 px-1.5 py-0.5 text-[10px] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-50"
                         x-text="renamingWindowKey === windowKey(w) ? 'Saving...' : 'Save'"></button>
                 <button @click="cancelRenameWindow()"
                         :disabled="renamingWindowKey === windowKey(w)"
@@ -609,18 +609,18 @@
               Terminal</button>
             <button x-show="w.triage === 'stalled' && (w.platform || 'claude') === 'claude'"
                     @click="reviewWindow(w)"
-                    class="text-xs border border-blue-200 text-blue-600 px-2 py-1 rounded hover:bg-blue-50 transition"
+                    class="text-xs border border-blue-200 dark:border-blue-700 bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 transition"
                     :class="reviewStatuses[windowKey(w)]==='running' ? 'opacity-50 cursor-wait' : ''"
                     :disabled="reviewStatuses[windowKey(w)]==='running'">
               <span x-text="reviewStatuses[windowKey(w)]==='running' ? 'Reviewing...' : (reviewStatuses[windowKey(w)]==='done' ? 'See Review' : 'Review')"></span></button>
             <button x-show="canCloseWindow(w)"
                     @click="if(confirm(closeLabel(w) + ' ' + (w.name||w.project_name) + '?')) closeWindow(w)"
-                    class="text-xs border px-2 py-1 rounded transition"
-                    :class="w.alive === false ? 'border-gray-300 text-gray-500 hover:bg-gray-100' : 'border-red-200 text-red-600 hover:bg-red-50'">
+                    class="text-xs border px-2 py-1 rounded transition bg-white dark:bg-gray-700"
+                    :class="w.alive === false ? 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600' : 'border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30'">
               <span x-text="closeLabel(w)"></span></button>
             <button x-show="['claude', 'codex'].includes(w.platform || 'claude')"
                     @click="forkWindow(w)"
-                    class="text-xs border border-green-200 text-green-600 px-2 py-1 rounded hover:bg-green-50 transition">
+                    class="text-xs border border-green-200 dark:border-green-800 bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 px-2 py-1 rounded hover:bg-green-50 dark:hover:bg-green-900/30 transition">
               Fork</button>
           </div>
         </div>
@@ -902,7 +902,7 @@
       <div class="flex items-center gap-2">
         <button @click="showPlanHistory = !showPlanHistory"
                 x-show="timelineData?.plan_history?.length"
-                class="text-xs border border-purple-200 text-purple-600 px-2 py-1 rounded hover:bg-purple-50 transition"
+                class="text-xs border border-purple-200 dark:border-purple-700 bg-white dark:bg-gray-700 text-purple-600 dark:text-purple-400 px-2 py-1 rounded hover:bg-purple-50 dark:hover:bg-purple-900/30 transition"
                 :class="showPlanHistory ? 'bg-purple-50' : ''">
           Plan · <span x-text="timelineData?.plan_history?.length || 0"></span> 版本</button>
         <button @click="expandedPid = null; expandedWindow = null; expandedHistoryId = null; timelineData = null; planData = null"
@@ -915,7 +915,7 @@
         <div class="flex items-center gap-2">
           <span class="font-semibold text-purple-800">Plan</span>
           <button @click="showCurrentPlan()"
-                  class="text-xs border border-purple-400 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-100 font-medium"
+                  class="text-xs border border-purple-400 dark:border-purple-700 bg-white dark:bg-gray-700 text-purple-700 dark:text-purple-400 px-2 py-0.5 rounded hover:bg-purple-100 dark:hover:bg-purple-900/30 font-medium"
                   :class="planData ? 'bg-purple-100' : ''">
             查看当前 plan
           </button>
@@ -929,7 +929,7 @@
           <span class="font-medium text-purple-900 text-xs" x-text="planData?.plan?.name || ''"></span>
           <div class="flex gap-2">
             <button @click="copyPlanContent()"
-                    class="text-xs border border-purple-300 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-100"
+                    class="text-xs border border-purple-300 dark:border-purple-700 bg-white dark:bg-gray-700 text-purple-700 dark:text-purple-400 px-2 py-0.5 rounded hover:bg-purple-100 dark:hover:bg-purple-900/30"
                     x-text="copyButtonText">Copy</button>
             <button @click="planData = null" class="text-purple-400 hover:text-purple-700">&times;</button>
           </div>
@@ -956,7 +956,7 @@
             <div x-show="ph._expanded" class="px-3 pb-3 border-t border-purple-100" x-transition>
               <template x-if="ph.operation === 'write' && ph.content">
                 <div class="mt-2">
-                  <button @click="copyText(ph.content)" class="text-xs border border-purple-300 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-100 mb-1">Copy</button>
+                  <button @click="copyText(ph.content)" class="text-xs border border-purple-300 dark:border-purple-700 bg-white dark:bg-gray-700 text-purple-700 dark:text-purple-400 px-2 py-0.5 rounded hover:bg-purple-100 dark:hover:bg-purple-900/30 mb-1">Copy</button>
                   <textarea readonly class="w-full text-xs text-purple-900 max-h-60 font-mono p-2 border rounded bg-purple-50/30"
                             rows="8" x-text="ph.content"></textarea>
                 </div>
@@ -1130,7 +1130,7 @@
                     class="text-xs border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
               Resume</button>
             <button x-show="!s.is_alive" @click="forkHistorySession(s)"
-                    class="text-xs border border-green-200 text-green-600 px-2 py-0.5 rounded hover:bg-green-50">
+                    class="text-xs border border-green-200 dark:border-green-800 bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 px-2 py-0.5 rounded hover:bg-green-50 dark:hover:bg-green-900/30">
               Fork</button>
           </div>
         </div>
