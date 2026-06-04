@@ -520,7 +520,7 @@
   <!-- ===== Managed terminal panel ===== -->
   <div x-ref="terminalPanel"
        x-show="terminalWindow"
-       :class="terminalZoom ? 'fixed inset-0 z-40 bg-white p-3 flex flex-col' : 'mt-6 scroll-mt-24 bg-white rounded-xl shadow border p-5'"
+       :class="terminalZoom ? 'fixed top-9 left-0 right-0 bottom-0 z-40 bg-white p-3 flex flex-col' : 'mt-6 scroll-mt-24 bg-white rounded-xl shadow border p-5'"
        x-transition>
     <div class="flex items-center justify-between mb-3">
       <div class="min-w-0">
@@ -546,7 +546,7 @@
                 class="text-xs border border-blue-300 text-blue-600 px-2 py-1 rounded hover:bg-blue-50">Complete</button>
         <button @click="terminalZoom = !terminalZoom"
                 class="text-xs border px-2 py-1 rounded"
-                :class="terminalZoom ? 'border-purple-300 text-purple-600 hover:bg-purple-50' : 'border-gray-200 text-gray-600 hover:bg-gray-50'"
+                :class="terminalZoom ? 'border-purple-400 text-purple-700 bg-purple-50' : 'border-purple-300 text-purple-600 hover:bg-purple-50'"
                 x-text="terminalZoom ? 'Unzoom' : 'Zoom'"></button>
         <button @click="reconnectTerminal()"
                 class="text-xs border px-2 py-1 rounded"
