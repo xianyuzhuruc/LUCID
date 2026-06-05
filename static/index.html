@@ -420,7 +420,7 @@
               <div class="flex items-center gap-2">
                 <span class="text-[11px] font-semibold text-emerald-700 shrink-0">New Dir:</span>
                 <input x-ref="launchNewDirInput"
-                       class="min-w-0 flex-1 rounded border border-emerald-300 bg-white dark:bg-gray-700 px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
+                       class="min-w-0 flex-1 rounded border border-emerald-300 dark:border-emerald-600 bg-white dark:bg-gray-700 px-2 py-1 font-mono text-[11px] text-gray-700 dark:text-gray-200 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
                        placeholder="folder name"
                        x-model="launchNewDirName"
                        @keydown.escape.prevent="launchNewDirOpen = false; launchNewDirError = ''"
@@ -776,8 +776,8 @@
              class="border-b border-emerald-200 bg-emerald-50 dark:bg-emerald-900/30 px-3 py-2">
           <div class="flex items-center gap-2">
             <span class="text-[11px] font-semibold text-emerald-700 shrink-0">New Dir:</span>
-            <input x-ref="newDirInput"
-                   class="min-w-0 flex-1 rounded border border-emerald-300 bg-white dark:bg-gray-700 px-2 py-1 font-mono text-[11px] text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
+                <input x-ref="newDirInput"
+                       class="min-w-0 flex-1 rounded border border-emerald-300 dark:border-emerald-600 bg-white dark:bg-gray-700 px-2 py-1 font-mono text-[11px] text-gray-700 dark:text-gray-200 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-300"
                    placeholder="folder name"
                    x-model="newDirName"
                    @keydown.escape.prevent="newDirOpen = false; newDirError = ''"
@@ -806,8 +806,11 @@
                     draggable="true"
                     @dragstart="startTerminalPathDrag($event, entry)"
                     @contextmenu.prevent="openContextMenu($event, entry)"
+                    @dragover.prevent="handleBrowserDragOver($event, entry)"
+                    @dragleave="handleBrowserDragLeave($event, entry)"
+                    @drop.prevent="handleBrowserDrop($event, entry)"
                     :disabled="!entry.readable"
-                    class="group flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-45">
+                    :class="'group flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-45' + (dragOverDir && dragOverDir.path === entry.path ? ' bg-blue-50 dark:bg-blue-900/20 ring-1 ring-blue-300 dark:ring-blue-600' : '')">
               <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
                     :class="fileBadgeClass(entry)"
                     x-text="fileBadgeLabel(entry)"></span>
@@ -1438,6 +1441,7 @@ function superCliTerminal() {
     editorTabs: [],
     activeEditorTab: -1,
     contextMenu: { show: false, x: 0, y: 0, entry: null },
+    dragOverDir: null,
     deletingNodeId: null,
     removingNodeId: null,
     deploying: false,
@@ -2273,9 +2277,57 @@ function superCliTerminal() {
         event.preventDefault();
         return;
       }
-      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.effectAllowed = 'copyMove';
       event.dataTransfer.setData('application/x-lucid-path', entry.path);
       event.dataTransfer.setData('text/plain', entry.path);
+    },
+
+    handleBrowserDragOver(event, entry) {
+      if (entry.kind !== 'directory' || !entry.readable) return;
+      this.dragOverDir = entry;
+    },
+
+    handleBrowserDragLeave(event, entry) {
+      if (this.dragOverDir && this.dragOverDir.path === entry.path) {
+        this.dragOverDir = null;
+      }
+    },
+
+    async handleBrowserDrop(event, entry) {
+      this.dragOverDir = null;
+      if (entry.kind !== 'directory' || !entry.readable) return;
+      const srcPath = event.dataTransfer.getData('application/x-lucid-path');
+      if (!srcPath || srcPath === entry.path) return;
+      // Don't move into own parent (no-op)
+      const srcName = srcPath.split('/').pop();
+      const destPath = entry.path;
+      if (destPath.startsWith(srcPath + '/')) {
+        this.toast('Cannot move a directory into itself');
+        return;
+      }
+      const nodeId = this.terminalWindow?.node_id || 'local';
+      try {
+        const r = await fetch('/api/nodes/' + encodeURIComponent(nodeId) + '/paths/move', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: srcPath, destination: destPath }),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          this.toast('Move failed: ' + (d.detail || d.error || ''));
+          return;
+        }
+        this.toast('Moved ' + srcName + ' → ' + (d.name || srcName));
+        // Update editor tab path if moved file is open
+        const tabIdx = this.editorTabs.findIndex(t => t.path === srcPath);
+        if (tabIdx >= 0) {
+          this.editorTabs[tabIdx].path = d.path;
+          if (this.activeEditorTab === tabIdx) this.editor.path = d.path;
+        }
+        if (this.terminalExplorer.path) await this.loadTerminalPath(this.terminalExplorer.path);
+      } catch (e) {
+        this.toast('Move failed: ' + String(e));
+      }
     },
 
     shellSingleQuote(text) {

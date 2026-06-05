@@ -408,6 +408,18 @@ def _local_path_list(raw_path: str | None = None) -> dict:
         raise HTTPException(400, f"path browse failed for {raw_path or Path.home()}: {e}") from e
 
 
+def _resolve_local_path(raw_path: str) -> Path:
+    if not str(raw_path or "").strip():
+        raise HTTPException(400, "path is required")
+    try:
+        path = Path(raw_path).expanduser().resolve(strict=True)
+    except FileNotFoundError as e:
+        raise HTTPException(404, f"path does not exist: {raw_path}") from e
+    except OSError as e:
+        raise HTTPException(400, f"path resolution failed: {e}") from e
+    return path
+
+
 def _resolve_local_file(raw_path: str) -> Path:
     if not str(raw_path or "").strip():
         raise HTTPException(400, "path is required")
@@ -465,7 +477,7 @@ def _local_file_write(payload: dict) -> dict:
 
 
 def _local_path_delete(raw_path: str) -> dict:
-    path = _resolve_local_file(raw_path)
+    path = _resolve_local_path(raw_path)
     directory = path.parent
     if not os.access(directory, os.W_OK | os.X_OK):
         raise HTTPException(403, f"directory is not writable: {directory}")
@@ -505,6 +517,22 @@ def _local_path_rename(payload: dict) -> dict:
         raise HTTPException(409, f"target already exists: {target}")
     path.rename(target)
     return {"ok": True, "path": str(target.resolve(strict=True)), "name": name, "directory": str(directory)}
+
+
+def _local_path_move(payload: dict) -> dict:
+    src = Path(str(payload.get("path") or ""))
+    dst_dir = Path(str(payload.get("destination") or ""))
+    if not src.exists():
+        raise HTTPException(404, f"source path does not exist: {src}")
+    if not dst_dir.is_dir():
+        raise HTTPException(400, f"destination is not a directory: {dst_dir}")
+    if not os.access(dst_dir, os.W_OK | os.X_OK):
+        raise HTTPException(403, f"destination directory is not writable: {dst_dir}")
+    target = dst_dir / src.name
+    if target.exists():
+        raise HTTPException(409, f"target already exists: {target}")
+    shutil.move(str(src), str(target))
+    return {"ok": True, "path": str(target.resolve(strict=True)), "name": src.name, "directory": str(dst_dir)}
 
 
 def _local_path_create(payload: dict) -> dict:
@@ -1317,6 +1345,14 @@ def api_node_path_rename(node_id: str, payload: dict = Body(...)) -> dict:
     return nodes.forward(node_id, "PATCH", "/agent/v1/paths", payload)
 
 
+@app.patch("/api/nodes/{node_id}/paths/move")
+def api_node_path_move(node_id: str, payload: dict = Body(...)) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _local_path_move(payload)
+    return nodes.forward(node_id, "PATCH", "/agent/v1/paths/move", payload)
+
+
 @app.post("/api/nodes/{node_id}/files/upload")
 def api_node_file_upload(node_id: str, payload: dict = Body(...)) -> dict:
     node = _configured_node(node_id)
@@ -1855,6 +1891,12 @@ def agent_file_delete(path: str = "", authorization: str | None = Header(None)) 
 def agent_path_rename(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
     _require_agent_auth(authorization)
     return _local_path_rename(payload)
+
+
+@app.patch("/agent/v1/paths/move")
+def agent_path_move(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _local_path_move(payload)
 
 
 @app.post("/agent/v1/files/upload")
