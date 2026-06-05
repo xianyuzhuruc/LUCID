@@ -3,6 +3,8 @@
 set -e
 cd "$(dirname "$0")"
 
+echo $$ > "$PWD/.lucid-pid"
+
 RUNTIME_DIR="${LUCID_RUNTIME_DIR:-$PWD/.lucid-runtime}"
 OLD_RUNTIME_DIR="$PWD/.fleet-runtime"
 if [ ! -e "$RUNTIME_DIR" ] && [ -d "$OLD_RUNTIME_DIR" ]; then
