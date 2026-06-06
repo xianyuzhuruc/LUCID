@@ -497,6 +497,26 @@ def _is_loopback_url(url: str) -> bool:
     return host == "localhost" or host == "::1" or host.startswith("127.")
 
 
+def _http_raw(node: NodeConfig, method: str, path: str, timeout_ms: int = 5000) -> tuple[bytes, str]:
+    """Return (body_bytes, content_type) from a remote agent."""
+    url = node.base_url + path
+    headers = {}
+    token = node.auth_token
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers, method=method)
+    try:
+        with _open_agent_request(node, req, timeout=timeout_ms / 1000) as resp:
+            raw = resp.read()
+            ct = resp.headers.get("Content-Type", "application/octet-stream")
+            return raw, ct
+    except urllib.error.HTTPError as e:
+        body = decode_utf8(e.read())[:2000]
+        raise RuntimeError(f"node {node.id} HTTP {e.code}: {body}") from e
+    except Exception as e:
+        raise RuntimeError(f"node {node.id} request failed: {e}") from e
+
+
 def agent_get(node: NodeConfig, path: str, timeout_ms: int = 1200) -> dict:
     return _http_json(node, "GET", path, timeout_ms=timeout_ms)
 
@@ -789,6 +809,16 @@ def forward(node_id: str, method: str, path: str, payload: Optional[dict] = None
         return agent_get(node, path, timeout_ms=timeout_ms)
     except Exception as e:
         return {"ok": False, "error": str(e), "node_id": node_id}
+
+
+def forward_raw(node_id: str, method: str, path: str) -> tuple[bytes, str]:
+    """Forward a request to a remote node and return raw bytes + content-type."""
+    node = node_by_id(node_id)
+    if not node:
+        raise ValueError(f"unknown node {node_id}")
+    if node.kind == "local":
+        raise ValueError("raw forwarding is not supported for local nodes")
+    return _http_raw(node, method, path, timeout_ms=10000)
 
 
 def write_node_config(node: NodeConfig) -> None:

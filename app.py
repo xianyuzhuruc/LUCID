@@ -5,8 +5,10 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import io
 import json
 import logging
+import mimetypes
 import os
 import select
 import shlex
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from paramiko.ssh_exception import AuthenticationException, NoValidConnectionsError, SSHException
 from sse_starlette.sse import EventSourceResponse
 from websockets.asyncio.client import connect as websocket_connect
@@ -34,6 +36,11 @@ from core.common.text_encoding import read_utf8, subprocess_text_kwargs, write_u
 from core.conversations import codex, history, search, transcripts
 from core.dashboard import localstate
 from core.hub import nodes
+from core.hub.skills_sync import (
+    build_skills_tarball_b64,
+    install_skills_from_b64,
+    sync_skills_via_ssh,
+)
 from core.hub.ssh_deploy import DeployRequest, deploy_agent
 from core.knowledge import memory, plans, skills
 from core.terminal import actions, path_browser, registry, runner, runtime
@@ -453,6 +460,48 @@ def _local_file_read(raw_path: str) -> dict:
         "mtime_ms": int(stat.st_mtime * 1000),
         "size": stat.st_size,
     }
+
+
+MIME_MAP = {
+    # images
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    # documents
+    ".pdf": "application/pdf",
+    # fallback for binary
+    ".bin": "application/octet-stream",
+}
+
+
+def _guess_mime(path: str) -> str:
+    """Guess MIME type from file extension, with a few explicit overrides."""
+    suffix = Path(path).suffix.lower()
+    if suffix in MIME_MAP:
+        return MIME_MAP[suffix]
+    guessed, _ = mimetypes.guess_type(path)
+    return guessed or "application/octet-stream"
+
+
+def _local_file_raw(raw_path: str) -> tuple[bytes, str]:
+    path = _resolve_local_file(raw_path)
+    if not os.access(path, os.R_OK):
+        raise HTTPException(403, f"file is not readable: {path}")
+    try:
+        content = path.read_bytes()
+    except PermissionError as e:
+        raise HTTPException(403, f"file is not readable: {path}") from e
+    except OSError as e:
+        raise HTTPException(400, f"file read failed for {path}: {e}") from e
+    mime = _guess_mime(str(path))
+    return content, mime
 
 
 def _local_file_write(payload: dict) -> dict:
@@ -1320,6 +1369,25 @@ def api_node_file_read(node_id: str, path: str = "") -> dict:
     return nodes.forward(node_id, "GET", f"/agent/v1/files?{query}")
 
 
+@app.get("/api/nodes/{node_id}/files/raw")
+def api_node_file_raw(node_id: str, path: str = ""):
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        content, mime = _local_file_raw(path)
+        return Response(content=content, media_type=mime,
+                        headers={"Content-Disposition": "inline"})
+    # For remote nodes, proxy the raw response
+    query = urllib.parse.urlencode({"path": path})
+    try:
+        raw, mime = nodes.forward_raw(node_id, "GET", f"/agent/v1/files/raw?{query}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, str(e))
+    return Response(content=raw, media_type=mime,
+                    headers={"Content-Disposition": "inline"})
+
+
 @app.post("/api/nodes/{node_id}/files")
 def api_node_file_write(node_id: str, payload: dict = Body(...)) -> dict:
     node = _configured_node(node_id)
@@ -1875,6 +1943,14 @@ def agent_file_read(path: str = "", authorization: str | None = Header(None)) ->
     return _local_file_read(path)
 
 
+@app.get("/agent/v1/files/raw")
+def agent_file_raw(path: str = "", authorization: str | None = Header(None)) -> Response:
+    _require_agent_auth(authorization)
+    content, mime = _local_file_raw(path)
+    return Response(content=content, media_type=mime,
+                    headers={"Content-Disposition": "inline"})
+
+
 @app.post("/agent/v1/files")
 def agent_file_write(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
     _require_agent_auth(authorization)
@@ -2251,6 +2327,162 @@ def api_skills() -> dict:
         s["total_activity"] = inv + rd + wr + brefs
     all_skills.sort(key=lambda s: (-s["total_activity"], -s["invoke_count"], s["name"]))
     return {"skills": all_skills}
+
+
+@app.get("/api/skills/hub")
+def api_skills_hub() -> dict:
+    """Return the list of skill directories installed on the hub."""
+    return {"skills": skills.list_all_skills()}
+
+
+@app.post("/api/skills/upload")
+def api_skills_upload(payload: dict = Body(...)) -> dict:
+    """Upload a skill folder to the hub.
+
+    Expected payload::
+
+        {
+            "origin": "claude" | "codex",
+            "name": "skill-name",
+            "files": [
+                {"path": "SKILL.md", "content_b64": "..."},
+                {"path": "scripts/helper.py", "content_b64": "..."}
+            ]
+        }
+    """
+    origin = str(payload.get("origin") or "claude").strip().lower()
+    if origin not in ("claude", "codex"):
+        raise HTTPException(400, "origin must be 'claude' or 'codex'")
+
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    # Basic sanitisation: reject path traversal attempts
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(400, f"invalid skill name: {name}")
+
+    file_list = payload.get("files") or []
+    if not isinstance(file_list, list) or not file_list:
+        raise HTTPException(400, "files list is required")
+
+    target_base = skills.SKILLS_DIR if origin == "claude" else skills.CODEX_SKILLS_DIR
+    target_dir = target_base / name
+
+    # Clear existing content before writing new files
+    import shutil
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    errors = []
+    for item in file_list:
+        if not isinstance(item, dict):
+            continue
+        rel = str(item.get("path") or "").strip()
+        b64 = str(item.get("content_b64") or "")
+        if not rel:
+            continue
+        # Sanitise each file path
+        if ".." in rel:
+            errors.append(f"skipped unsafe path: {rel}")
+            continue
+        dest = (target_dir / rel).resolve()
+        if not str(dest).startswith(str(target_dir.resolve())):
+            errors.append(f"skipped path escape: {rel}")
+            continue
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            raw = base64.b64decode(b64)
+            dest.write_bytes(raw)
+            written += 1
+        except Exception as e:
+            errors.append(f"{rel}: {e}")
+
+    return {
+        "ok": True,
+        "origin": origin,
+        "name": name,
+        "dir": str(target_dir),
+        "written": written,
+        "errors": errors,
+    }
+
+
+@app.get("/api/skills/{name}/files")
+def api_skills_files(name: str, origin: str = "claude") -> dict:
+    """Return all files in a skill as a flat list with base64 contents.
+
+    Used by the frontend for folder-download via the File System Access API.
+    """
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(404, f"invalid skill name: {name}")
+    origin = origin.strip().lower()
+    if origin not in ("claude", "codex"):
+        raise HTTPException(400, "origin must be 'claude' or 'codex'")
+
+    source_dir = skills.SKILLS_DIR if origin == "claude" else skills.CODEX_SKILLS_DIR
+    skill_dir = source_dir / name
+    if not skill_dir.is_dir():
+        raise HTTPException(404, f"skill not found: {name}")
+
+    files = []
+    for fpath in sorted(skill_dir.rglob("*")):
+        if fpath.is_file():
+            rel = str(fpath.relative_to(skill_dir))
+            try:
+                content_b64 = base64.b64encode(fpath.read_bytes()).decode("ascii")
+            except Exception:
+                content_b64 = ""
+            files.append({
+                "path": rel,
+                "content_b64": content_b64,
+                "size": fpath.stat().st_size,
+            })
+
+    return {"ok": True, "name": name, "origin": origin, "files": files}
+
+
+@app.post("/api/nodes/{node_id}/skills/sync")
+def api_node_skills_sync(node_id: str, payload: dict = Body(...)) -> dict:
+    """Sync hub skills to a node.  *mode* must be ``"append"`` or ``"replace"``."""
+    mode = str(payload.get("mode") or "append").strip().lower()
+    if mode not in ("append", "replace"):
+        raise HTTPException(400, "mode must be 'append' or 'replace'")
+
+    node = _configured_node(node_id)
+    if node.kind in ("local", "agent"):
+        # Skills are already local on the hub
+        tarball_b64 = build_skills_tarball_b64()
+        if not tarball_b64:
+            return {"ok": False, "error": "No skills found on hub"}
+        return install_skills_from_b64(tarball_b64, mode)
+
+    # Build the tarball on the hub and send it to the agent
+    tarball_b64 = build_skills_tarball_b64()
+    if not tarball_b64:
+        return {"ok": False, "error": "No skills found on hub"}
+
+    # Try forwarding through the agent first (faster, avoids SSH)
+    try:
+        return nodes.forward(node_id, "POST", "/agent/v1/skills/sync",
+                             {"mode": mode, "tarball_b64": tarball_b64})
+    except Exception:
+        pass
+
+    # Fallback: direct SSH
+    return sync_skills_via_ssh(node_id, tarball_b64, mode)
+
+
+@app.post("/agent/v1/skills/sync")
+def agent_skills_sync(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
+    """Agent-side skill sync — receives tarball from hub and installs."""
+    _require_agent_auth(authorization)
+    mode = str(payload.get("mode") or "append").strip().lower()
+    tarball_b64 = str(payload.get("tarball_b64") or "")
+    if not tarball_b64:
+        raise HTTPException(400, "tarball_b64 is required")
+    return install_skills_from_b64(tarball_b64, mode)
 
 
 @app.get("/api/memory")

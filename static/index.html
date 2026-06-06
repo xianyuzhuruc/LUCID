@@ -157,6 +157,10 @@
             class="text-xs border px-2 py-1 rounded hover:bg-slate-50 transition"
             :class="showNodes ? 'border-slate-400 text-slate-700 bg-slate-50 dark:bg-gray-700 dark:text-gray-200' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400'">
       Nodes</button>
+    <button @click="showSkills = !showSkills; if(showSkills) refreshSkills()"
+            class="text-xs border px-2 py-1 rounded hover:bg-slate-50 transition"
+            :class="showSkills ? 'border-slate-400 text-slate-700 bg-slate-50 dark:bg-gray-700 dark:text-gray-200' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400'">
+      Skills</button>
     <div class="hidden lg:flex items-center gap-1 text-[10px]" x-show="nodes.length">
       <template x-for="n in nodes" :key="n.id">
         <span class="px-1.5 py-0.5 rounded-full border"
@@ -474,6 +478,93 @@
     </div>
   </div>
 
+  <!-- ===== Skills panel ===== -->
+  <div x-show="showSkills" class="mb-4 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow-sm border p-4" x-transition>
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <h2 class="font-semibold text-sm">Skills (<span x-text="hubSkills.length"></span>)</h2>
+      </div>
+      <div class="flex items-center gap-2">
+        <span x-show="loadingSkills" class="text-xs text-gray-400">Loading...</span>
+        <button @click="refreshSkills()" class="text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-3 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600">
+          Refresh</button>
+        <select x-model="skillUploadOrigin" class="text-xs border dark:border-gray-600 rounded px-1.5 py-1 dark:bg-gray-700 dark:text-gray-200">
+          <option value="claude">claude</option>
+          <option value="codex">codex</option>
+        </select>
+        <button @click="$refs.skillUploadInput?.click()"
+                :disabled="uploadingSkill"
+                class="text-xs border border-blue-200 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-3 py-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40"
+                x-text="uploadingSkill ? 'Uploading...' : 'Upload'"></button>
+        <input x-ref="skillUploadInput"
+               type="file"
+               class="hidden"
+               webkitdirectory multiple
+               @change="uploadSkillFolder($event)">
+        <button @click="showSkills = false" class="text-gray-400 hover:text-gray-700">&times;</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <!-- Left: hub skills list -->
+      <div class="lg:col-span-2 border dark:border-gray-700 rounded p-3">
+        <h3 class="text-xs font-semibold mb-2">Hub skills</h3>
+        <div x-show="hubSkills.length === 0" class="border border-dashed dark:border-gray-600 rounded p-4 text-xs text-gray-400 dark:text-gray-500">
+          No skills found on hub
+        </div>
+        <div class="max-h-80 overflow-y-auto space-y-1" x-show="hubSkills.length > 0">
+          <template x-for="sk in hubSkills" :key="sk.name">
+            <div class="flex items-center gap-2 border dark:border-gray-700 rounded px-2 py-1.5 text-xs">
+              <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono"
+                    :class="sk.origin === 'claude' ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'"
+                    x-text="sk.origin"></span>
+              <span class="min-w-0 flex-1 font-medium text-gray-700 dark:text-gray-200 truncate" x-text="sk.name"></span>
+              <span class="hidden sm:inline text-gray-400 dark:text-gray-500 truncate max-w-[16rem]" x-text="sk.description"></span>
+              <button @click="downloadSkillFolder(sk)"
+                      class="shrink-0 rounded border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600"
+                      title="Download skill folder"
+                      x-text="'↓'"></button>
+            </div>
+          </template>
+        </div>
+      </div>
+      <!-- Right: sync to SSH nodes -->
+      <div class="lg:col-span-1 border dark:border-gray-700 rounded p-3">
+        <h3 class="text-xs font-semibold mb-2">Sync to node</h3>
+        <div x-show="!remoteNodes.length" class="border border-dashed dark:border-gray-600 rounded p-4 text-xs text-gray-400 dark:text-gray-500">
+          No remote SSH nodes configured
+        </div>
+        <div class="space-y-2 max-h-80 overflow-y-auto" x-show="remoteNodes.length > 0">
+          <template x-for="n in remoteNodes" :key="n.id">
+            <div class="border dark:border-gray-700 rounded p-2 text-xs">
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <div class="min-w-0">
+                  <div class="font-semibold truncate text-gray-700 dark:text-gray-200" x-text="n.name || n.id"></div>
+                  <div class="text-gray-400 dark:text-gray-500 truncate" x-text="(n.user ? n.user + '@' : '') + (n.host || n.ssh_host)"></div>
+                </div>
+                <span class="px-2 py-0.5 rounded-full text-[10px] shrink-0"
+                      :class="n.health === 'healthy' ? 'bg-emerald-100 text-emerald-700' : n.health === 'stale' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
+                      x-text="n.health || 'offline'"></span>
+              </div>
+              <div class="flex gap-1.5">
+                <button @click="syncSkillsToNode(n, 'append')"
+                        :disabled="skillSyncBusy[n.id]"
+                        class="flex-1 text-[10px] border border-blue-300 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40"
+                        x-text="skillSyncBusy[n.id] ? '...' : 'Append'"></button>
+                <button @click="syncSkillsToNode(n, 'replace')"
+                        :disabled="skillSyncBusy[n.id]"
+                        class="flex-1 text-[10px] border border-red-300 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-2 py-1 rounded hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-40"
+                        x-text="skillSyncBusy[n.id] ? '...' : 'Replace'"></button>
+              </div>
+              <div x-show="skillSyncResults[n.id]" class="mt-1.5 rounded px-2 py-1 text-[10px]"
+                   :class="(skillSyncResults[n.id]||{}).ok ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400' : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400'"
+                   x-text="(skillSyncResults[n.id]||{}).summary || (skillSyncResults[n.id]||{}).error || ''"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== Search results ===== -->
   <div x-show="searchResults !== null" class="mb-4 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow-sm border p-4" x-transition>
     <div class="flex items-center justify-between mb-3">
@@ -652,7 +743,7 @@
           <button @click="setTerminalTab('editor')"
                   class="text-xs border px-2 py-1 rounded shrink-0"
                   :class="terminalPanelTab === 'editor' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
-            Text Editor</button>
+            Editor</button>
           <!-- File sub-tabs -->
           <template x-for="(tab, idx) in editorTabs" :key="tab.path">
             <div class="text-xs border px-2 py-1 rounded shrink-0 flex items-center gap-1"
@@ -699,7 +790,7 @@
       <button @click="setTerminalTab('editor')"
               class="border-x border-t px-3 py-1.5 text-xs shrink-0"
               :class="terminalPanelTab === 'editor' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
-        Text Editor</button>
+        Editor</button>
       <!-- File sub-tabs -->
       <template x-for="(tab, idx) in editorTabs" :key="tab.path">
         <div class="border-x border-t px-2 py-1.5 text-xs shrink-0 flex items-center gap-1 rounded-t"
@@ -859,16 +950,21 @@
               <span x-show="editor.saving" class="text-gray-400">Saving...</span>
               <span x-show="editor.deleting" class="text-gray-400">Deleting...</span>
               <span x-show="editor.dirty && !editor.saving && !editor.deleting" class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">modified</span>
+              <span x-show="editor.type === 'image'" class="text-[10px] text-purple-600 dark:text-purple-400 font-medium">🖼 Image</span>
+              <span x-show="editor.type === 'pdf'" class="text-[10px] text-red-600 dark:text-red-400 font-medium">📄 PDF</span>
               <button @click="deleteEditorFile()"
                       :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
                       class="rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
                       x-text="editor.deleting ? 'Deleting...' : 'Delete'"></button>
               <button @click="saveEditorFile()"
+                      x-show="editor.type !== 'image' && editor.type !== 'pdf'"
                       :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
                       class="rounded border border-blue-200 bg-white dark:bg-gray-700 px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40">Save</button>
             </div>
             <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
-            <div class="relative flex-1 min-h-0 bg-white dark:bg-gray-800" x-ref="editorViewport">
+
+            <!-- Text editor -->
+            <div x-show="editor.type !== 'image' && editor.type !== 'pdf'" class="relative flex-1 min-h-0 bg-white dark:bg-gray-800" x-ref="editorViewport">
               <!-- Syntax highlight overlay (behind) -->
               <pre class="editor-highlight-layer absolute inset-0 overflow-auto p-3 font-mono text-xs leading-5"
                    aria-hidden="true"><code x-ref="editorHighlight" class="block min-h-full"></code></pre>
@@ -886,6 +982,23 @@
                         autocomplete="off"
                         autocorrect="off"
                         autocapitalize="off"></textarea>
+            </div>
+
+            <!-- Image viewer -->
+            <div x-show="editor.type === 'image'" class="flex-1 min-h-0 overflow-auto flex items-center justify-center bg-gray-100 dark:bg-gray-900 p-4"
+                 style="background-image: linear-gradient(45deg, #e5e5e5 25%, transparent 25%, transparent 75%, #e5e5e5 75%, #e5e5e5),
+                        linear-gradient(45deg, #e5e5e5 25%, transparent 25%, transparent 75%, #e5e5e5 75%, #e5e5e5);
+                        background-size: 20px 20px;
+                        background-position: 0 0, 10px 10px;">
+              <img :src="editor.rawUrl" class="max-w-full max-h-full object-contain shadow-lg rounded"
+                   alt="image preview"
+                   @error="editor.error = 'Failed to load image'">
+            </div>
+
+            <!-- PDF viewer -->
+            <div x-show="editor.type === 'pdf'" class="flex-1 min-h-0">
+              <iframe :src="editor.rawUrl" class="w-full h-full border-0"
+                      @error="editor.error = 'Failed to load PDF'"></iframe>
             </div>
         </div>
       </div>
@@ -1389,6 +1502,13 @@ function superCliTerminal() {
     nodes: [],
     sshHistory: [],
     showNodes: false,
+    showSkills: false,
+    hubSkills: [],
+    loadingSkills: false,
+    skillSyncBusy: {},
+    skillSyncResults: {},
+    skillUploadOrigin: 'claude',
+    uploadingSkill: false,
     showSettings: false,
     theme: 'light',
     syntaxTheme: 'lucid-dark',
@@ -1430,6 +1550,8 @@ function superCliTerminal() {
     _highlightTimeout: null,
     editor: {
       path: '',
+      type: 'text',
+      rawUrl: '',
       content: '',
       originalContent: '',
       loading: false,
@@ -1517,6 +1639,10 @@ function superCliTerminal() {
         const nodeOk = !this.nodeFilter || (w.node_id || 'local') === this.nodeFilter;
         return statusOk && nodeOk;
       });
+    },
+
+    get remoteNodes() {
+      return this.nodes.filter(n => n.kind === 'ssh' && !this.isLocalNode(n));
     },
 
     attentionState(w) {
@@ -1631,6 +1757,24 @@ function superCliTerminal() {
     nodeFileUrl(nodeId, path) {
       const query = path ? `?path=${encodeURIComponent(path)}` : '';
       return `/api/nodes/${encodeURIComponent(nodeId || 'local')}/files${query}`;
+    },
+
+    nodeFileRawUrl(nodeId, path) {
+      const query = path ? `?path=${encodeURIComponent(path)}` : '';
+      return `/api/nodes/${encodeURIComponent(nodeId || 'local')}/files/raw${query}`;
+    },
+
+    isImageFile(path) {
+      const ext = (path || '').toLowerCase().split('.').pop();
+      return ['png','jpg','jpeg','gif','svg','webp','bmp','ico','tiff','tif'].includes(ext);
+    },
+
+    isPDFFile(path) {
+      return (path || '').toLowerCase().endsWith('.pdf');
+    },
+
+    isViewableFile(path) {
+      return this.isImageFile(path) || this.isPDFFile(path);
     },
 
     nodeFileUploadUrl(nodeId) {
@@ -2096,8 +2240,11 @@ function superCliTerminal() {
     _saveActiveTab() {
       if (this.activeEditorTab < 0 || this.activeEditorTab >= this.editorTabs.length) return;
       const tab = this.editorTabs[this.activeEditorTab];
-      tab.content = this.editor.content;
-      tab.dirty = this.editor.dirty;
+      // Only save state for text tabs (viewer tabs are read-only)
+      if (tab.type !== 'image' && tab.type !== 'pdf') {
+        tab.content = this.editor.content;
+        tab.dirty = this.editor.dirty;
+      }
     },
 
     switchEditorTab(idx) {
@@ -2106,17 +2253,27 @@ function superCliTerminal() {
       this.activeEditorTab = idx;
       const tab = this.editorTabs[idx];
       this.editor.path = tab.path;
-      this.editor.content = tab.content;
-      this.editor.originalContent = tab.originalContent;
-      this.editor.dirty = tab.dirty;
+      this.editor.type = tab.type || 'text';
+      this.editor.rawUrl = tab.rawUrl || '';
+      this.editor.content = tab.content || '';
+      this.editor.originalContent = tab.originalContent || '';
+      this.editor.dirty = !!tab.dirty;
       this.editor.error = '';
-      this.$nextTick(() => this.syncEditorHighlight());
+      this.editor.loading = false;
+      if (tab.type === 'image' || tab.type === 'pdf') {
+        // viewer tab — clear text highlight
+        const codeEl = this.$refs.editorHighlight;
+        if (codeEl) codeEl.innerHTML = '';
+      } else {
+        this.$nextTick(() => this.syncEditorHighlight());
+      }
     },
 
     closeEditorTab(idx) {
       if (idx < 0 || idx >= this.editorTabs.length) return;
       const tab = this.editorTabs[idx];
-      if (tab.dirty) {
+      // Viewer tabs (image/pdf) never have unsaved changes
+      if (tab.dirty && tab.type !== 'image' && tab.type !== 'pdf') {
         if (!confirm('Discard unsaved changes to ' + this.tabFileBase(tab.path) + '?')) return;
       }
       // If closing the active tab, save current edits first
@@ -2151,6 +2308,8 @@ function superCliTerminal() {
       this._highlightTimeout = null;
       this.editor = {
         path: '',
+        type: 'text',
+        rawUrl: '',
         content: '',
         originalContent: '',
         loading: false,
@@ -2176,10 +2335,39 @@ function superCliTerminal() {
       }
       this._saveActiveTab();
       this.terminalPanelTab = 'editor';
+
+      const nodeId = this.terminalWindow.node_id || 'local';
+      const isImage = this.isImageFile(path);
+      const isPDF = this.isPDFFile(path);
+
+      // Image / PDF: open as a viewer tab (no text content fetch needed)
+      if (isImage || isPDF) {
+        const filePath = path;
+        const rawUrl = this.nodeFileRawUrl(nodeId, filePath);
+        const newIdx = this.editorTabs.length;
+        this.editorTabs.push({
+          path: filePath,
+          type: isImage ? 'image' : 'pdf',
+          rawUrl: rawUrl,
+          content: '',
+          originalContent: '',
+          dirty: false,
+        });
+        this.activeEditorTab = newIdx;
+        this.editor.path = filePath;
+        this.editor.content = '';
+        this.editor.originalContent = '';
+        this.editor.dirty = false;
+        this.editor.loading = false;
+        this.editor.error = '';
+        return;
+      }
+
+      // Text file
       this.editor.loading = true;
       this.editor.error = '';
       try {
-        const r = await fetch(this.nodeFileUrl(this.terminalWindow.node_id || 'local', path));
+        const r = await fetch(this.nodeFileUrl(nodeId, path));
         const d = await r.json();
         if (!r.ok || d.ok === false) {
           this.editor.error = d.detail || d.error || 'File read failed';
@@ -2191,6 +2379,7 @@ function superCliTerminal() {
         const newIdx = this.editorTabs.length;
         this.editorTabs.push({
           path: filePath,
+          type: 'text',
           content: content,
           originalContent: content,
           dirty: false,
@@ -2246,6 +2435,7 @@ function superCliTerminal() {
 
     async saveEditorFile() {
       if (!this.terminalWindow || !this.editor.path || this.editor.loading || this.editor.saving || this.editor.deleting) return;
+      if (this.editor.type === 'image' || this.editor.type === 'pdf') return; // viewer tabs are read-only
       this.editor.saving = true;
       this.editor.error = '';
       try {
@@ -3342,6 +3532,142 @@ function superCliTerminal() {
       const failed = this.syncJobs.filter(job => job.status === 'failed').length;
       this.toast(failed ? 'Node sync finished with ' + failed + ' failures' : 'Node sync complete');
       await this.refreshNodes();
+    },
+
+    async refreshSkills() {
+      this.loadingSkills = true;
+      try {
+        const r = await fetch('/api/skills/hub');
+        const d = await r.json();
+        this.hubSkills = d.skills || [];
+      } catch (e) {
+        this.toast('Failed to load skills: ' + String(e.message || e));
+      } finally {
+        this.loadingSkills = false;
+      }
+    },
+
+    async syncSkillsToNode(node, mode) {
+      const nodeId = node.id;
+      this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: true };
+      this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: null };
+      try {
+        const r = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/skills/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: mode }),
+        });
+        const d = await r.json();
+        this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: d };
+        if (d.ok) {
+          this.toast(`${mode === 'replace' ? 'Replaced' : 'Appended'} skills on ${node.name || nodeId}`);
+        } else {
+          this.toast(`Skills sync failed: ${d.error || 'unknown error'}`);
+        }
+      } catch (e) {
+        this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: { ok: false, error: String(e.message || e) } };
+        this.toast('Skills sync failed: ' + String(e.message || e));
+      } finally {
+        this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: false };
+      }
+    },
+
+    async uploadSkillFolder(event) {
+      const input = event?.target;
+      const files = input?.files;
+      if (!files || !files.length) return;
+      this.uploadingSkill = true;
+      try {
+        // Derive skill name from the first file's relative path
+        const firstPath = files[0].webkitRelativePath || files[0].name;
+        const skillName = firstPath.split('/')[0];
+        if (!skillName) {
+          this.toast('Could not determine skill folder name');
+          return;
+        }
+
+        // Build file list
+        const fileList = [];
+        for (const f of files) {
+          const relPath = (f.webkitRelativePath || f.name);
+          // Strip the root folder name to get the path inside the skill dir
+          const innerPath = relPath.split('/').slice(1).join('/');
+          if (!innerPath) continue; // skip the root dir entry itself
+          const b64 = await this.readFileAsBase64(f);
+          fileList.push({ path: innerPath, content_b64: b64 });
+        }
+
+        const origin = this.skillUploadOrigin || 'claude';
+        const r = await fetch('/api/skills/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ origin, name: skillName, files: fileList }),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          this.toast('Upload failed: ' + (d.detail || d.error || 'unknown error'));
+          return;
+        }
+        this.toast(`Uploaded ${d.written} files → ${origin}/skills/${skillName}`);
+        await this.refreshSkills();
+      } catch (e) {
+        this.toast('Upload failed: ' + String(e.message || e));
+      } finally {
+        this.uploadingSkill = false;
+        input.value = '';
+      }
+    },
+
+    async downloadSkillFolder(sk) {
+      // Use File System Access API to write the skill as a real folder
+      if (!window.showDirectoryPicker) {
+        this.toast('Folder download requires Chrome / Edge. Use .tar.gz instead.');
+        return;
+      }
+      try {
+        // Fetch file listing from the backend
+        const url = `/api/skills/${encodeURIComponent(sk.name)}/files?origin=${encodeURIComponent(sk.origin)}`;
+        const r = await fetch(url);
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          this.toast('Failed to list skill files: ' + (d.detail || d.error || ''));
+          return;
+        }
+        const files = d.files || [];
+        if (!files.length) {
+          this.toast('Skill is empty');
+          return;
+        }
+
+        // User picks a parent directory
+        const parentHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        // Create the skill subfolder
+        const skillHandle = await parentHandle.getDirectoryHandle(sk.name, { create: true });
+
+        // Write each file
+        let written = 0;
+        for (const f of files) {
+          const parts = f.path.split('/');
+          const fileName = parts.pop();
+          // Ensure intermediate directories exist
+          let dirHandle = skillHandle;
+          for (const part of parts) {
+            dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
+          }
+          // Decode base64 and write
+          const raw = Uint8Array.from(atob(f.content_b64), c => c.charCodeAt(0));
+          const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(raw);
+          await writable.close();
+          written++;
+        }
+
+        this.toast(`Downloaded ${written} files → ${sk.name}/`);
+      } catch (e) {
+        if (e.name === 'AbortError') return; // user cancelled the picker
+        this.toast('Folder download failed: ' + String(e.message || e));
+      }
     },
 
     applyDeployStatus(d) {
