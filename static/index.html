@@ -540,6 +540,11 @@
                         class="shrink-0 rounded border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600"
                         title="Download skill folder"
                         x-text="'↓'"></button>
+                <button @click.stop="deleteSkill(sk)"
+                        :disabled="skillDeleting === sk.name"
+                        class="shrink-0 rounded border border-red-200 dark:border-red-800 px-1.5 py-0.5 text-[10px] text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
+                        title="Delete skill from hub"
+                        x-text="skillDeleting === sk.name ? '...' : '✕'"></button>
               </div>
               <!-- Expanded file list + editor -->
               <div x-show="skillExpanded === sk.name"
@@ -1582,6 +1587,7 @@ function superCliTerminal() {
     skillEditingContent: '',
     skillEditingDirty: false,
     skillEditingSaving: false,
+    skillDeleting: null,
     showSettings: false,
     theme: 'light',
     syntaxTheme: 'lucid-dark',
@@ -3711,6 +3717,34 @@ function superCliTerminal() {
       }
     },
 
+    async deleteSkill(sk) {
+      if (this.skillDeleting === sk.name) return;
+      if (!confirm(`Delete skill "${sk.name}" from hub?`)) return;
+      this.skillDeleting = sk.name;
+      try {
+        const dirParam = sk.dir ? `?dir=${encodeURIComponent(sk.dir)}` : '';
+        const r = await fetch(`/api/skills/${encodeURIComponent(sk.name)}${dirParam}`, { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+          this.toast(`Delete failed: ${d.detail || d.error || ''}`, 6000);
+          return;
+        }
+        // Remove from file list cache and selection
+        const key = sk.name;
+        const newFileList = { ...this.skillFileList };
+        delete newFileList[key];
+        this.skillFileList = newFileList;
+        this.skillSelection = this.skillSelection.filter(s => s !== key);
+        if (this.skillExpanded === key) this.skillExpanded = '';
+        await this.refreshSkills();
+        this.toast(`Deleted ${sk.name}`, 4000);
+      } catch (e) {
+        this.toast('Delete failed: ' + String(e.message || e), 6000);
+      } finally {
+        this.skillDeleting = null;
+      }
+    },
+
     async uploadSkillFolder(event) {
       const input = event?.target;
       const files = input?.files;
@@ -3757,12 +3791,20 @@ function superCliTerminal() {
     },
 
     async downloadSkillFolder(sk) {
-      // Use File System Access API to write the skill as a real folder
-      if (!window.showDirectoryPicker) {
-        this.toast('Folder download requires Chrome / Edge. Use .tar.gz instead.');
-        return;
-      }
       try {
+        // Fallback for Firefox / browsers without File System Access API
+        if (!window.showDirectoryPicker) {
+          const dirParam = sk.dir ? `?dir=${encodeURIComponent(sk.dir)}` : '';
+          const a = document.createElement('a');
+          a.href = `/api/skills/${encodeURIComponent(sk.name)}/tar${dirParam}`;
+          a.download = `${sk.name}.tar.gz`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          return;
+        }
+
+        // File System Access API: folder download
         const dirParam = sk.dir ? `?dir=${encodeURIComponent(sk.dir)}` : '';
         const url = `/api/skills/${encodeURIComponent(sk.name)}/files${dirParam}`;
         const r = await fetch(url);
@@ -3777,22 +3819,17 @@ function superCliTerminal() {
           return;
         }
 
-        // User picks a parent directory
         const parentHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        // Create the skill subfolder
         const skillHandle = await parentHandle.getDirectoryHandle(sk.name, { create: true });
 
-        // Write each file
         let written = 0;
         for (const f of files) {
           const parts = f.path.split('/');
           const fileName = parts.pop();
-          // Ensure intermediate directories exist
           let dirHandle = skillHandle;
           for (const part of parts) {
             dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
           }
-          // Decode base64 and write
           const raw = Uint8Array.from(atob(f.content_b64), c => c.charCodeAt(0));
           const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
           const writable = await fileHandle.createWritable();
@@ -3803,7 +3840,7 @@ function superCliTerminal() {
 
         this.toast(`Downloaded ${written} files → ${sk.name}/`);
       } catch (e) {
-        if (e.name === 'AbortError') return; // user cancelled the picker
+        if (e.name === 'AbortError') return;
         this.toast('Folder download failed: ' + String(e.message || e));
       }
     },

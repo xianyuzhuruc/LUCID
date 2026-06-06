@@ -2464,6 +2464,38 @@ def api_skills_file_write(name: str, payload: dict = Body(...)) -> dict:
             "size": stat.st_size, "mtime_ms": int(stat.st_mtime * 1000)}
 
 
+@app.get("/api/skills/{name}/tar")
+def api_skills_tar(name: str, dir: str | None = None) -> Response:
+    """Download a skill as a .tar.gz file."""
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(404, f"invalid skill name: {name}")
+    skill_dir = _resolve_skill_dir(name, dir)
+
+    import tarfile as tarfile_mod
+    buf = io.BytesIO()
+    with tarfile_mod.open(fileobj=buf, mode="w:gz") as tar:
+        for fpath in sorted(skill_dir.rglob("*")):
+            if fpath.is_file():
+                arcname = f"{name}/{fpath.relative_to(skill_dir)}"
+                tar.add(str(fpath), arcname=arcname)
+    buf.seek(0)
+    return Response(content=buf.getvalue(), media_type="application/gzip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.tar.gz"'})
+
+
+@app.delete("/api/skills/{name}")
+def api_skills_delete(name: str, dir: str | None = None) -> dict:
+    """Delete a skill directory from the hub."""
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(404, f"invalid skill name: {name}")
+
+    skill_dir = _resolve_skill_dir(name, dir)
+    import shutil
+    shutil.rmtree(skill_dir, ignore_errors=True)
+
+    return {"ok": True, "name": name, "deleted": str(skill_dir)}
+
+
 @app.post("/api/nodes/{node_id}/skills/sync")
 def api_node_skills_sync(node_id: str, payload: dict = Body(...)) -> dict:
     mode = str(payload.get("mode") or "append").strip().lower()
