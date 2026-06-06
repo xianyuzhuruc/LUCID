@@ -31,6 +31,7 @@ def _parse_skill_md(path: Path) -> Optional[dict]:
         description = name
     return {
         "name": name,
+        "dir": str(path.parent),
         "description": description[:200],
         "trigger": trigger[:200],
         "path": str(path),

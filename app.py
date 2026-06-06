@@ -2412,22 +2412,42 @@ def api_skills_upload(payload: dict = Body(...)) -> dict:
     }
 
 
-@app.get("/api/skills/{name}/files")
-def api_skills_files(name: str, origin: str = "claude") -> dict:
-    """Return all files in a skill as a flat list with base64 contents.
+def _resolve_skill_dir(name: str, origin: str, dir_hint: str | None = None) -> Path:
+    """Resolve the skill directory from name/origin or an explicit dir hint.
 
-    Used by the frontend for folder-download via the File System Access API.
+    The *dir_hint* takes precedence and must be a child of the skills base dir.
     """
+    if dir_hint and str(dir_hint).strip():
+        d = Path(str(dir_hint).strip())
+        # Safety: only allow paths under the canonical skills directories
+        allowed_bases = (skills.SKILLS_DIR.resolve(), skills.CODEX_SKILLS_DIR.resolve())
+        resolved = d.resolve()
+        for base in allowed_bases:
+            if str(resolved).startswith(str(base)) and resolved.is_dir():
+                return resolved
+        raise HTTPException(404, f"skill directory not found: {d}")
+    # Fall back to name + origin lookup
+    source_dir = skills.SKILLS_DIR if origin == "claude" else skills.CODEX_SKILLS_DIR
+    skill_dir = source_dir / name
+    if skill_dir.is_dir():
+        return skill_dir
+    # Try a recursive lookup — the skill might be nested
+    for d in source_dir.rglob(name):
+        if d.is_dir() and (d / "SKILL.md").exists():
+            return d
+    raise HTTPException(404, f"skill not found: {name}")
+
+
+@app.get("/api/skills/{name}/files")
+def api_skills_files(name: str, origin: str = "claude", dir: str | None = None) -> dict:
+    """Return all files in a skill as a flat list with base64 contents."""
     if ".." in name or "/" in name or "\\" in name:
         raise HTTPException(404, f"invalid skill name: {name}")
     origin = origin.strip().lower()
     if origin not in ("claude", "codex"):
         raise HTTPException(400, "origin must be 'claude' or 'codex'")
 
-    source_dir = skills.SKILLS_DIR if origin == "claude" else skills.CODEX_SKILLS_DIR
-    skill_dir = source_dir / name
-    if not skill_dir.is_dir():
-        raise HTTPException(404, f"skill not found: {name}")
+    skill_dir = _resolve_skill_dir(name, origin, dir)
 
     files = []
     for fpath in sorted(skill_dir.rglob("*")):
@@ -2448,19 +2468,11 @@ def api_skills_files(name: str, origin: str = "claude") -> dict:
 
 @app.put("/api/skills/{name}/files")
 def api_skills_file_write(name: str, payload: dict = Body(...)) -> dict:
-    """Write a single file inside a skill directory on the hub.
-
-    Expected payload::
-
-        {
-            "origin": "claude" | "codex",
-            "path": "SKILL.md",
-            "content": "new file content here"
-        }
-    """
+    """Write a single file inside a skill directory on the hub."""
     if ".." in name or "/" in name or "\\" in name:
         raise HTTPException(404, f"invalid skill name: {name}")
     origin = str(payload.get("origin") or "claude").strip().lower()
+    dir_hint = payload.get("dir")
     rel = str(payload.get("path") or "").strip()
     content = str(payload.get("content") or "")
 
@@ -2469,10 +2481,7 @@ def api_skills_file_write(name: str, payload: dict = Body(...)) -> dict:
     if ".." in rel:
         raise HTTPException(400, f"invalid file path: {rel}")
 
-    source_dir = skills.SKILLS_DIR if origin == "claude" else skills.CODEX_SKILLS_DIR
-    skill_dir = source_dir / name
-    if not skill_dir.is_dir():
-        raise HTTPException(404, f"skill not found: {name}")
+    skill_dir = _resolve_skill_dir(name, origin, dir_hint)
 
     dest = (skill_dir / rel).resolve()
     if not str(dest).startswith(str(skill_dir.resolve())):
