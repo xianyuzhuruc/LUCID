@@ -2487,11 +2487,11 @@ def api_node_skills_sync(node_id: str, payload: dict = Body(...)) -> dict:
     if not tarball_b64:
         return {"ok": False, "error": "No skills found on hub"}
 
-    try:
-        return nodes.forward(node_id, "POST", "/agent/v1/skills/sync",
-                             {"mode": mode, "tarball_b64": tarball_b64})
-    except Exception:
-        pass
+    # Try agent API first; fall back to SSH on failure
+    result = nodes.forward(node_id, "POST", "/agent/v1/skills/sync",
+                           {"mode": mode, "tarball_b64": tarball_b64})
+    if result.get("ok"):
+        return result
 
     return sync_skills_via_ssh(node_id, tarball_b64, mode)
 

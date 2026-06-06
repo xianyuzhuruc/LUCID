@@ -3660,10 +3660,10 @@ function superCliTerminal() {
 
     async syncSkillsToNode(node, mode) {
       const nodeId = node.id;
-      // Build list of selected skill names; null means "all"
       const selected = this.skillSelection.length > 0 ? this.skillSelection : null;
       this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: true };
       this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: null };
+      this.toast(`Syncing skills to ${node.name || nodeId} (${mode})...`, 3000);
       try {
         const r = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/skills/sync`, {
           method: 'POST',
@@ -3673,14 +3673,14 @@ function superCliTerminal() {
         const d = await r.json();
         this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: d };
         if (d.ok) {
-          const label = selected.length ? `${selected.length} skill(s)` : 'all skills';
+          const label = selected && selected.length ? `${selected.length} skill(s)` : 'all skills';
           this.toast(`${mode === 'replace' ? 'Replaced' : 'Appended'} ${label} on ${node.name || nodeId}`);
         } else {
-          this.toast(`Skills sync failed: ${d.error || 'unknown error'}`);
+          this.toast(`Sync failed: ${d.error || 'unknown error'}`);
         }
       } catch (e) {
         this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: { ok: false, error: String(e.message || e) } };
-        this.toast('Skills sync failed: ' + String(e.message || e));
+        this.toast('Sync failed: ' + String(e.message || e));
       } finally {
         this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: false };
       }
@@ -3690,6 +3690,7 @@ function superCliTerminal() {
       const nodeId = node.id;
       this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: true };
       this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: null };
+      this.toast(`Pulling skills from ${node.name || nodeId}...`, 3000);
       try {
         const r = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/skills/pull`, {
           method: 'POST',
@@ -3697,8 +3698,10 @@ function superCliTerminal() {
         const d = await r.json();
         this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: d };
         if (d.ok) {
+          if (d.installed && d.installed.length) {
+            await this.refreshSkills();
+          }
           this.toast(d.summary || `Pulled skills from ${node.name || nodeId}`);
-          if (d.installed && d.installed.length) await this.refreshSkills();
         } else {
           this.toast(`Pull failed: ${d.error || 'unknown error'}`);
         }
