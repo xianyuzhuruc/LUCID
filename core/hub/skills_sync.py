@@ -1,4 +1,4 @@
-"""Sync hub skills to remote agent nodes via SSH or the agent API."""
+"""Sync hub skills (~/.lucid/skills/) to/from remote agent nodes."""
 from __future__ import annotations
 
 import base64
@@ -16,14 +16,14 @@ from core.hub.nodes import (
     NodeConfig,
     load_config,
 )
+from core.knowledge.skills import HUB_SKILLS_DIR
 from core.terminal.sessions import CLAUDE_HOME, HOME_BASE
 
-SKILLS_DIR = CLAUDE_HOME / "skills"
-CODEX_SKILLS_DIR = HOME_BASE / ".codex" / "skills"
+# On remote agent nodes, the same skills are installed to both directories.
+REMOTE_SKILL_DIRS = (CLAUDE_HOME / "skills", HOME_BASE / ".codex" / "skills")
 
 
 def _load_raw_ssh_history() -> list[dict]:
-    """Load raw SSH history entries (including passwords)."""
     try:
         raw = json.loads(SSH_HISTORY_PATH.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -34,7 +34,6 @@ def _load_raw_ssh_history() -> list[dict]:
 
 
 def _ssh_connect(node: NodeConfig, password: str = "") -> paramiko.SSHClient:
-    """Connect to a remote node via SSH using stored config + password."""
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     kwargs: dict = {
@@ -58,7 +57,6 @@ def _ssh_connect(node: NodeConfig, password: str = "") -> paramiko.SSHClient:
 
 
 def _run(client: paramiko.SSHClient, command: str, timeout: int = 120) -> str:
-    """Execute a remote command and return combined stdout+stderr."""
     stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
     rc = stdout.channel.recv_exit_status()
     out = decode_utf8(stdout.read(), errors=BYTE_ERROR_ESCAPE)
@@ -68,56 +66,72 @@ def _run(client: paramiko.SSHClient, command: str, timeout: int = 120) -> str:
     return out + err
 
 
-def build_skills_tarball_b64(names: list[dict] | None = None) -> str:
-    """Create a base64-encoded gzipped tarball of the hub's skill directories.
+# ---------------------------------------------------------------------------
+# Tarball builders
+# ---------------------------------------------------------------------------
 
-    If *names* is provided, only include skills matching ``{name, origin}`` entries.
+def build_skills_tarball_b64(names: list[str] | None = None) -> str:
+    """Base64-encoded gzipped tarball of the hub skill directories.
 
-    Includes ``~/.claude/skills/*`` and ``~/.codex/skills/*`` (skipping
-    dot-prefixed entries).
+    If *names* is provided, only include those skill directory names.
     """
-    # Build allow-list if names filter is provided (empty list = all skills)
-    allowed: set[tuple[str, str]] | None = None
+    allowed: set[str] | None = None
     if names is not None:
         allowed = set()
-        for item in names:
-            n = str(item.get("name") or "").strip()
-            o = str(item.get("origin") or "claude").strip().lower()
-            if n:
-                allowed.add((n, o))
+        for n in names:
+            name = str(n).strip() if isinstance(n, str) else str(n.get("name", "") if isinstance(n, dict) else n).strip()
+            if name:
+                allowed.add(name)
         if not allowed:
-            return ""  # no skills selected
+            return ""
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for skills_dir, origin_tag in ((SKILLS_DIR, "claude"), (CODEX_SKILLS_DIR, "codex")):
-            if not skills_dir.exists():
+        if not HUB_SKILLS_DIR.exists():
+            return ""
+        # Only include skill directories (those containing SKILL.md) or
+        # parent directories of nested skills.  Collect the set of paths
+        # that are needed.
+        needed: set[str] = set()
+        for d in HUB_SKILLS_DIR.rglob("SKILL.md"):
+            rel = d.relative_to(HUB_SKILLS_DIR)
+            # Add every prefix directory
+            for p in rel.parents:
+                needed.add(str(p))
+        # Also add any loose files at the root
+        for item in HUB_SKILLS_DIR.iterdir():
+            if item.is_file() and not item.name.startswith("."):
+                needed.add("")  # marker for root files
+
+        for item in sorted(HUB_SKILLS_DIR.iterdir()):
+            if item.name.startswith(".") and item.name not in (".system",):
                 continue
-            for item in sorted(skills_dir.iterdir()):
-                if item.name.startswith(".") and item.name not in (".system",):
+            if allowed is not None and item.is_dir() and item.name not in allowed:
+                continue
+            # Only include if this item or something under it is needed
+            if item.is_dir():
+                rel = str(Path(item.name))
+                if not any(n == rel or n.startswith(rel + "/") for n in needed):
                     continue
-                # If filtering, skip skills not in the allowed set
-                if allowed is not None and item.is_dir():
-                    skill_name = item.name
-                    if (skill_name, origin_tag) not in allowed:
-                        continue
-                arcname = f"{skills_dir.name}/{item.name}"
-                if item.is_dir():
-                    tar.add(item, arcname=arcname, recursive=True)
-                elif item.is_file():
-                    tar.add(item, arcname=arcname)
+                tar.add(item, arcname=item.name, recursive=True)
+            elif item.is_file() and "" in needed:
+                tar.add(item, arcname=item.name)
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def install_skills_from_b64(tarball_b64: str, mode: str) -> dict:
-    """Extract a base64 skills tarball to the local filesystem.
+def build_skills_tarball_raw() -> bytes:
+    b64 = build_skills_tarball_b64()
+    return base64.b64decode(b64) if b64 else b""
 
-    Args:
-        tarball_b64: base64-encoded gzipped tarball produced by
-            :func:`build_skills_tarball_b64`.
-        mode: ``"append"`` or ``"replace"``.
 
-    Returns a result dict.
+# ---------------------------------------------------------------------------
+# Install on remote agent (hub → remote)
+# ---------------------------------------------------------------------------
+
+def install_skills_to_remote(tarball_b64: str, mode: str) -> dict:
+    """Extract a tarball to both remote skill directories.
+
+    Called by the agent-side ``/agent/v1/skills/sync`` endpoint.
     """
     if mode not in ("append", "replace"):
         return {"ok": False, "error": f"Invalid mode: {mode}"}
@@ -126,57 +140,34 @@ def install_skills_from_b64(tarball_b64: str, mode: str) -> dict:
         raw = base64.b64decode(tarball_b64)
     except Exception as e:
         return {"ok": False, "error": f"Invalid tarball base64: {e}"}
-
     if not raw:
         return {"ok": False, "error": "Empty tarball"}
 
-    # Prepare directories
-    claude_skills = SKILLS_DIR
-    codex_skills = CODEX_SKILLS_DIR
+    import shutil
 
     if mode == "replace":
-        import shutil
-        for d in (claude_skills, codex_skills):
+        for d in REMOTE_SKILL_DIRS:
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
 
-    claude_skills.mkdir(parents=True, exist_ok=True)
-    codex_skills.mkdir(parents=True, exist_ok=True)
-
-    # Extract — tar entries are named "skills/<skill_name>" or "skills.codex/<skill_name>"
-    # We need to map "skills/" → ~/.claude/skills/ and "skills.codex/" → ~/.codex/skills/
-    try:
-        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
-            for member in tar.getmembers():
-                parts = member.name.split("/", 1)
-                if len(parts) < 2:
-                    continue
-                dir_tag, rest = parts[0], parts[1]
-                if not rest:
-                    continue
-
-                if dir_tag == "skills":
-                    target_dir = claude_skills
-                elif dir_tag == "skills.codex":
-                    target_dir = codex_skills
-                else:
-                    continue
-
-                # Rewrite member name to strip the dir_tag prefix
-                member.name = rest
-                # Resolve target path safely
-                target_path = (target_dir / rest).resolve()
-                if not str(target_path).startswith(str(target_dir.resolve())):
-                    continue  # safety: skip paths that escape the skills dir
-                tar.extract(member, path=str(target_dir), set_attrs=False)
-    except Exception as e:
-        return {"ok": False, "error": f"Tarball extraction failed: {e}"}
+    for d in REMOTE_SKILL_DIRS:
+        d.mkdir(parents=True, exist_ok=True)
 
     synced = []
-    if claude_skills.exists():
-        synced.append(str(claude_skills))
-    if codex_skills.exists():
-        synced.append(str(codex_skills))
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
+        for member in tar.getmembers():
+            if not member.name or member.name.startswith(".") and "/" not in member.name:
+                continue
+            # Extract into each target dir
+            for target_dir in REMOTE_SKILL_DIRS:
+                target_path = (target_dir / member.name).resolve()
+                if not str(target_path).startswith(str(target_dir.resolve())):
+                    continue
+                tar.extract(member, path=str(target_dir), set_attrs=False)
+            if str(REMOTE_SKILL_DIRS[0]) not in synced:
+                synced.append(str(REMOTE_SKILL_DIRS[0]))
+            if str(REMOTE_SKILL_DIRS[1]) not in synced:
+                synced.append(str(REMOTE_SKILL_DIRS[1]))
 
     return {
         "ok": True,
@@ -186,8 +177,96 @@ def install_skills_from_b64(tarball_b64: str, mode: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Install on hub (remote → hub, "pull")
+# ---------------------------------------------------------------------------
+
+def install_skills_append_only(tarball_bytes: bytes) -> dict:
+    """Extract a tarball to the hub, skipping already-existing skills."""
+    existing = _hub_skill_names()
+    if not tarball_bytes:
+        return {"ok": False, "error": "Empty tarball"}
+
+    HUB_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+
+    installed: list[str] = []
+    skipped: list[str] = []
+
+    try:
+        with tarfile.open(fileobj=io.BytesIO(tarball_bytes), mode="r:gz") as tar:
+            # Find which skills are new
+            new_skills: set[str] = set()
+            for member in tar.getmembers():
+                if not (member.name.endswith("/SKILL.md") or
+                        (member.name.endswith("SKILL.md") and "/" in member.name)):
+                    continue
+                skill_name = member.name.split("/")[0]
+                if not skill_name or skill_name.startswith("."):
+                    continue
+                if skill_name not in existing:
+                    new_skills.add(skill_name)
+                else:
+                    if skill_name not in skipped:
+                        skipped.append(skill_name)
+
+            if not new_skills:
+                return {
+                    "ok": True, "mode": "pull",
+                    "installed": [], "skipped": skipped,
+                    "summary": f"All {len(skipped)} remote skills already exist on hub — nothing to pull.",
+                }
+
+            # Extract only files belonging to new skills
+            for member in tar.getmembers():
+                skill_name = member.name.split("/")[0]
+                if not skill_name or skill_name not in new_skills:
+                    continue
+                target_path = (HUB_SKILLS_DIR / member.name).resolve()
+                if not str(target_path).startswith(str(HUB_SKILLS_DIR.resolve())):
+                    continue
+                tar.extract(member, path=str(HUB_SKILLS_DIR), set_attrs=False)
+
+            installed = sorted(new_skills)
+    except Exception as e:
+        return {"ok": False, "error": f"Tarball extraction failed: {e}"}
+
+    return {
+        "ok": True, "mode": "pull",
+        "installed": installed, "skipped": skipped,
+        "summary": (
+            f"Pulled {len(installed)} new skill(s) from remote → hub "
+            f"({', '.join(installed[:5])}{'...' if len(installed) > 5 else ''})"
+            if installed else f"No new skills — {len(skipped)} already on hub."
+        ),
+    }
+
+
+def _hub_skill_names() -> set[str]:
+    """Return all skill and parent-directory names present on the hub.
+
+    Includes both skill names (directories containing SKILL.md) and
+    intermediate directory names that sit between SKILL.md-containing
+    dirs and the skills root.  This prevents empty parent dirs from
+    being falsely installed as new skills during a pull.
+    """
+    names: set[str] = set()
+    if not HUB_SKILLS_DIR.exists():
+        return names
+    for d in HUB_SKILLS_DIR.rglob("*"):
+        if d.is_dir() and (d / "SKILL.md").exists():
+            names.add(d.name)
+            # Also register all ancestor directories up to HUB_SKILLS_DIR
+            for parent in d.relative_to(HUB_SKILLS_DIR).parents:
+                if str(parent) != ".":
+                    names.add(str(parent))
+    return names
+
+
+# ---------------------------------------------------------------------------
+# SSH direct sync (hub → remote)
+# ---------------------------------------------------------------------------
+
 def sync_skills_via_ssh(node_id: str, tarball_b64: str, mode: str) -> dict:
-    """Sync skills to an SSH-configured node via direct SSH (no agent required)."""
     cfg = load_config()
     node = None
     for n in cfg.nodes:
@@ -208,25 +287,20 @@ def sync_skills_via_ssh(node_id: str, tarball_b64: str, mode: str) -> dict:
     except Exception as e:
         return {"ok": False, "error": f"Invalid tarball: {e}"}
 
-    try:
-        client = _ssh_connect(node, password)
-    except Exception as e:
-        return {"ok": False, "error": f"SSH connection failed: {e}"}
-
+    client = _ssh_connect(node, password)
     try:
         remote_tmp = "/tmp/lucid-skills-sync.tar.gz"
         with client.open_sftp() as sftp:
             sftp.putfo(io.BytesIO(raw), remote_tmp)
 
-        claude_skills_remote = "$HOME/.claude/skills"
-        codex_skills_remote = "$HOME/.codex/skills"
+        _claude = "$HOME/.claude/skills"
+        _codex = "$HOME/.codex/skills"
 
         if mode == "replace":
-            _run(client, f"rm -rf {claude_skills_remote} {codex_skills_remote}")
-            _run(client, f"mkdir -p {claude_skills_remote} {codex_skills_remote}")
-
-        _run(client, f"mkdir -p {claude_skills_remote} {codex_skills_remote}")
-        _run(client, f"cd $HOME && tar xzf {remote_tmp} && rm -f {remote_tmp}")
+            _run(client, f"rm -rf {_claude} {_codex}")
+        _run(client, f"mkdir -p {_claude} {_codex}")
+        # Extract to both directories
+        _run(client, f"cd $HOME && tar xzf {remote_tmp} -C {_claude} && tar xzf {remote_tmp} -C {_codex} && rm -f {remote_tmp}")
 
         try:
             _run(client, f"rm -f {remote_tmp}")
@@ -234,9 +308,7 @@ def sync_skills_via_ssh(node_id: str, tarball_b64: str, mode: str) -> dict:
             pass
 
         return {
-            "ok": True,
-            "mode": mode,
-            "node_id": node_id,
+            "ok": True, "mode": mode, "node_id": node_id,
             "summary": f"{'Replaced' if mode == 'replace' else 'Appended'} hub skills on {node_id} ({node.host or node.ssh_host}) → ~/.claude/skills/ and ~/.codex/skills/",
         }
     finally:
@@ -246,163 +318,12 @@ def sync_skills_via_ssh(node_id: str, tarball_b64: str, mode: str) -> dict:
             pass
 
 
-def build_skills_tarball_raw(names: list[dict] | None = None) -> bytes:
-    """Return a gzipped tarball of hub skill directories as raw bytes."""
-    allowed: set[tuple[str, str]] | None = None
-    if names is not None:
-        allowed = set()
-        for item in names:
-            n = str(item.get("name") or "").strip()
-            o = str(item.get("origin") or "claude").strip().lower()
-            if n:
-                allowed.add((n, o))
-        if not allowed:
-            return b""  # no skills selected
-
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for skills_dir, origin_tag in ((SKILLS_DIR, "claude"), (CODEX_SKILLS_DIR, "codex")):
-            if not skills_dir.exists():
-                continue
-            for item in sorted(skills_dir.iterdir()):
-                if item.name.startswith(".") and item.name not in (".system",):
-                    continue
-                if allowed is not None and item.is_dir():
-                    if (item.name, origin_tag) not in allowed:
-                        continue
-                arcname = f"{skills_dir.name}/{item.name}"
-                if item.is_dir():
-                    tar.add(item, arcname=arcname, recursive=True)
-                elif item.is_file():
-                    tar.add(item, arcname=arcname)
-    return buf.getvalue()
-
-
-def hub_skill_names() -> set[str]:
-    """Return the set of skill names already installed on the hub (recursive)."""
-    names: set[str] = set()
-    for base in (SKILLS_DIR, CODEX_SKILLS_DIR):
-        if not base.exists():
-            continue
-        for d in base.rglob("*"):
-            if d.is_dir() and (d / "SKILL.md").exists():
-                names.add(d.name)
-    return names
-
-
-def install_skills_append_only(tarball_bytes: bytes) -> dict:
-    """Extract a tarball to hub, skipping skills that already exist.
-
-    Only installs skill directories that are *not* already present on the hub.
-    Skill names are derived from tarball paths that end with ``SKILL.md``
-    (so nested skills like ``skills/superpowers/foo/SKILL.md`` yield name ``foo``).
-    """
-    existing = hub_skill_names()
-    if not tarball_bytes:
-        return {"ok": False, "error": "Empty tarball"}
-
-    claude_skills = SKILLS_DIR
-    codex_skills = CODEX_SKILLS_DIR
-    claude_skills.mkdir(parents=True, exist_ok=True)
-    codex_skills.mkdir(parents=True, exist_ok=True)
-
-    installed: list[str] = []
-    skipped: list[str] = []
-
-    try:
-        with tarfile.open(fileobj=io.BytesIO(tarball_bytes), mode="r:gz") as tar:
-            # First pass: find SKILL.md entries to determine skill names
-            skill_roots: dict[str, str] = {}  # skill_name -> member prefix to extract
-            for member in tar.getmembers():
-                if member.name.endswith("/SKILL.md") or member.name.endswith("SKILL.md") and "/" in member.name:
-                    parts = member.name.rsplit("/", 2)
-                    # parts: ["skills", "...prefix.../skill_name", "SKILL.md"]
-                    if len(parts) >= 2:
-                        skill_name = parts[-2]  # the directory containing SKILL.md
-                        # The prefix to match files belonging to this skill
-                        prefix = "/".join(parts[:-1]) + "/"
-                        if skill_name not in skill_roots:
-                            skill_roots[skill_name] = prefix
-
-            # Dedup
-            new_skills: dict[str, str] = {}
-            for name, prefix in skill_roots.items():
-                if name not in existing:
-                    new_skills[name] = prefix
-                else:
-                    skipped.append(name)
-
-            if not new_skills:
-                return {
-                    "ok": True,
-                    "mode": "pull",
-                    "installed": [],
-                    "skipped": skipped,
-                    "summary": f"All {len(skipped)} remote skills already exist on hub — nothing to pull.",
-                }
-
-            # Second pass: extract files belonging to new skills
-            seen: set[str] = set()
-            for member in tar.getmembers():
-                if member.name in seen:
-                    continue
-                seen.add(member.name)
-
-                # Check if this entry belongs to any new skill
-                matched_name = None
-                matched_prefix = None
-                for name, prefix in new_skills.items():
-                    if member.name.startswith(prefix):
-                        matched_name = name
-                        matched_prefix = prefix
-                        break
-                if matched_name is None:
-                    continue
-
-                # Determine target directory from the first path segment
-                parts = member.name.split("/", 1)
-                dir_tag = parts[0]
-                if dir_tag == "skills":
-                    target_dir = claude_skills
-                elif dir_tag == "skills.codex":
-                    target_dir = codex_skills
-                else:
-                    continue
-
-                # Rewrite member name to strip the dir_tag and skill prefix
-                # Original: "skills/superpowers/foo/SKILL.md"
-                # After strip: "superpowers/foo/SKILL.md" (relative to claude_skills)
-                rest = member.name[len(dir_tag) + 1:]  # strip "skills/"
-                member.name = rest
-
-                target_path = (target_dir / rest).resolve()
-                if not str(target_path).startswith(str(target_dir.resolve())):
-                    continue
-                tar.extract(member, path=str(target_dir), set_attrs=False)
-
-            installed = sorted(new_skills.keys())
-    except Exception as e:
-        return {"ok": False, "error": f"Tarball extraction failed: {e}"}
-
-    return {
-        "ok": True,
-        "mode": "pull",
-        "installed": installed,
-        "skipped": skipped,
-        "summary": (
-            f"Pulled {len(installed)} new skill(s) from remote → hub "
-            f"({', '.join(installed[:5])}{'...' if len(installed) > 5 else ''})"
-            if installed else
-            f"No new skills — {len(skipped)} already on hub."
-        ),
-    }
-
+# ---------------------------------------------------------------------------
+# SSH pull (remote → hub)
+# ---------------------------------------------------------------------------
 
 def pull_skills_via_ssh(node_id: str) -> tuple[bytes, dict]:
-    """Download a skills tarball from a remote SSH node.
-
-    Returns (tarball_bytes, node_info).
-    """
+    """Download and merge skills from both remote directories into a single tarball."""
     cfg = load_config()
     node = None
     for n in cfg.nodes:
@@ -421,11 +342,10 @@ def pull_skills_via_ssh(node_id: str) -> tuple[bytes, dict]:
     client = _ssh_connect(node, password)
     try:
         remote_tmp = "/tmp/lucid-skills-pull.tar.gz"
-        # Build tarball on remote and download it
+        # Merge skills from both dirs, deduplicating by name
         _run(client, (
-            f"rm -f {remote_tmp} && "
-            f"cd $HOME && "
-            f"tar czf {remote_tmp} .claude/skills .codex/skills 2>/dev/null || true"
+            f"rm -f {remote_tmp} && cd $HOME && "
+            f"(tar czf {remote_tmp} .claude/skills .codex/skills 2>/dev/null || true)"
         ))
 
         buf = io.BytesIO()
@@ -433,12 +353,8 @@ def pull_skills_via_ssh(node_id: str) -> tuple[bytes, dict]:
             sftp.getfo(remote_tmp, buf)
         _run(client, f"rm -f {remote_tmp}")
 
-        node_info = {
-            "id": node.id,
-            "name": node.name or node.id,
-            "host": node.host or node.ssh_host,
-            "user": node.user,
-        }
+        node_info = {"id": node.id, "name": node.name or node.id,
+                     "host": node.host or node.ssh_host, "user": node.user}
         return buf.getvalue(), node_info
     finally:
         try:

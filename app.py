@@ -40,7 +40,7 @@ from core.hub.skills_sync import (
     build_skills_tarball_b64,
     build_skills_tarball_raw,
     install_skills_append_only,
-    install_skills_from_b64,
+    install_skills_to_remote,
     pull_skills_via_ssh,
     sync_skills_via_ssh,
 )
@@ -2344,23 +2344,11 @@ def api_skills_upload(payload: dict = Body(...)) -> dict:
 
     Expected payload::
 
-        {
-            "origin": "claude" | "codex",
-            "name": "skill-name",
-            "files": [
-                {"path": "SKILL.md", "content_b64": "..."},
-                {"path": "scripts/helper.py", "content_b64": "..."}
-            ]
-        }
+        {"name": "skill-name", "files": [{"path": "SKILL.md", "content_b64": "..."}]}
     """
-    origin = str(payload.get("origin") or "claude").strip().lower()
-    if origin not in ("claude", "codex"):
-        raise HTTPException(400, "origin must be 'claude' or 'codex'")
-
     name = str(payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name is required")
-    # Basic sanitisation: reject path traversal attempts
     if ".." in name or "/" in name or "\\" in name:
         raise HTTPException(400, f"invalid skill name: {name}")
 
@@ -2368,10 +2356,9 @@ def api_skills_upload(payload: dict = Body(...)) -> dict:
     if not isinstance(file_list, list) or not file_list:
         raise HTTPException(400, "files list is required")
 
-    target_base = skills.SKILLS_DIR if origin == "claude" else skills.CODEX_SKILLS_DIR
-    target_dir = target_base / name
+    skills.HUB_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    target_dir = skills.HUB_SKILLS_DIR / name
 
-    # Clear existing content before writing new files
     import shutil
     if target_dir.exists():
         shutil.rmtree(target_dir, ignore_errors=True)
@@ -2386,7 +2373,6 @@ def api_skills_upload(payload: dict = Body(...)) -> dict:
         b64 = str(item.get("content_b64") or "")
         if not rel:
             continue
-        # Sanitise each file path
         if ".." in rel:
             errors.append(f"skipped unsafe path: {rel}")
             continue
@@ -2396,58 +2382,41 @@ def api_skills_upload(payload: dict = Body(...)) -> dict:
             continue
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            raw = base64.b64decode(b64)
-            dest.write_bytes(raw)
+            dest.write_bytes(base64.b64decode(b64))
             written += 1
         except Exception as e:
             errors.append(f"{rel}: {e}")
 
-    return {
-        "ok": True,
-        "origin": origin,
-        "name": name,
-        "dir": str(target_dir),
-        "written": written,
-        "errors": errors,
-    }
+    return {"ok": True, "name": name, "dir": str(target_dir),
+            "written": written, "errors": errors}
 
 
-def _resolve_skill_dir(name: str, origin: str, dir_hint: str | None = None) -> Path:
-    """Resolve the skill directory from name/origin or an explicit dir hint.
-
-    The *dir_hint* takes precedence and must be a child of the skills base dir.
-    """
+def _resolve_skill_dir(name: str, dir_hint: str | None = None) -> Path:
+    """Resolve a skill directory from name or an explicit dir hint."""
     if dir_hint and str(dir_hint).strip():
         d = Path(str(dir_hint).strip())
-        # Safety: only allow paths under the canonical skills directories
-        allowed_bases = (skills.SKILLS_DIR.resolve(), skills.CODEX_SKILLS_DIR.resolve())
+        base = skills.HUB_SKILLS_DIR.resolve()
         resolved = d.resolve()
-        for base in allowed_bases:
-            if str(resolved).startswith(str(base)) and resolved.is_dir():
-                return resolved
+        if str(resolved).startswith(str(base)) and resolved.is_dir():
+            return resolved
         raise HTTPException(404, f"skill directory not found: {d}")
-    # Fall back to name + origin lookup
-    source_dir = skills.SKILLS_DIR if origin == "claude" else skills.CODEX_SKILLS_DIR
-    skill_dir = source_dir / name
+
+    skill_dir = skills.HUB_SKILLS_DIR / name
     if skill_dir.is_dir():
         return skill_dir
-    # Try a recursive lookup — the skill might be nested
-    for d in source_dir.rglob(name):
+    for d in skills.HUB_SKILLS_DIR.rglob(name):
         if d.is_dir() and (d / "SKILL.md").exists():
             return d
     raise HTTPException(404, f"skill not found: {name}")
 
 
 @app.get("/api/skills/{name}/files")
-def api_skills_files(name: str, origin: str = "claude", dir: str | None = None) -> dict:
+def api_skills_files(name: str, dir: str | None = None) -> dict:
     """Return all files in a skill as a flat list with base64 contents."""
     if ".." in name or "/" in name or "\\" in name:
         raise HTTPException(404, f"invalid skill name: {name}")
-    origin = origin.strip().lower()
-    if origin not in ("claude", "codex"):
-        raise HTTPException(400, "origin must be 'claude' or 'codex'")
 
-    skill_dir = _resolve_skill_dir(name, origin, dir)
+    skill_dir = _resolve_skill_dir(name, dir)
 
     files = []
     for fpath in sorted(skill_dir.rglob("*")):
@@ -2457,13 +2426,9 @@ def api_skills_files(name: str, origin: str = "claude", dir: str | None = None) 
                 content_b64 = base64.b64encode(fpath.read_bytes()).decode("ascii")
             except Exception:
                 content_b64 = ""
-            files.append({
-                "path": rel,
-                "content_b64": content_b64,
-                "size": fpath.stat().st_size,
-            })
+            files.append({"path": rel, "content_b64": content_b64, "size": fpath.stat().st_size})
 
-    return {"ok": True, "name": name, "origin": origin, "files": files}
+    return {"ok": True, "name": name, "files": files}
 
 
 @app.put("/api/skills/{name}/files")
@@ -2471,7 +2436,6 @@ def api_skills_file_write(name: str, payload: dict = Body(...)) -> dict:
     """Write a single file inside a skill directory on the hub."""
     if ".." in name or "/" in name or "\\" in name:
         raise HTTPException(404, f"invalid skill name: {name}")
-    origin = str(payload.get("origin") or "claude").strip().lower()
     dir_hint = payload.get("dir")
     rel = str(payload.get("path") or "").strip()
     content = str(payload.get("content") or "")
@@ -2481,7 +2445,7 @@ def api_skills_file_write(name: str, payload: dict = Body(...)) -> dict:
     if ".." in rel:
         raise HTTPException(400, f"invalid file path: {rel}")
 
-    skill_dir = _resolve_skill_dir(name, origin, dir_hint)
+    skill_dir = _resolve_skill_dir(name, dir_hint)
 
     dest = (skill_dir / rel).resolve()
     if not str(dest).startswith(str(skill_dir.resolve())):
@@ -2496,60 +2460,52 @@ def api_skills_file_write(name: str, payload: dict = Body(...)) -> dict:
     except OSError as e:
         raise HTTPException(400, f"file write failed: {e}") from e
 
-    return {
-        "ok": True,
-        "path": str(dest),
-        "name": dest.name,
-        "size": stat.st_size,
-        "mtime_ms": int(stat.st_mtime * 1000),
-    }
+    return {"ok": True, "path": str(dest), "name": dest.name,
+            "size": stat.st_size, "mtime_ms": int(stat.st_mtime * 1000)}
 
 
 @app.post("/api/nodes/{node_id}/skills/sync")
 def api_node_skills_sync(node_id: str, payload: dict = Body(...)) -> dict:
     """Sync hub skills to a node.  *mode* must be ``"append"`` or ``"replace"``.
 
-    Optional *names* (list of ``{name, origin}``) limits which skills to sync.
+    Optional *names* (list of skill name strings) limits which skills to sync.
     """
     mode = str(payload.get("mode") or "append").strip().lower()
     if mode not in ("append", "replace"):
         raise HTTPException(400, "mode must be 'append' or 'replace'")
 
-    names = payload.get("names") or None  # list of {name, origin}, or None for all
+    names = payload.get("names") or None  # list of strings, or None for all
 
     node = _configured_node(node_id)
     if node.kind in ("local", "agent"):
-        # Skills are already local on the hub
         tarball_b64 = build_skills_tarball_b64(names)
         if not tarball_b64:
             return {"ok": False, "error": "No skills found on hub"}
-        return install_skills_from_b64(tarball_b64, mode)
+        return install_skills_to_remote(tarball_b64, mode)
 
-    # Build the tarball on the hub and send it to the agent
     tarball_b64 = build_skills_tarball_b64(names)
     if not tarball_b64:
         return {"ok": False, "error": "No skills found on hub"}
 
-    # Try forwarding through the agent first (faster, avoids SSH)
     try:
         return nodes.forward(node_id, "POST", "/agent/v1/skills/sync",
                              {"mode": mode, "tarball_b64": tarball_b64})
     except Exception:
         pass
 
-    # Fallback: direct SSH
     return sync_skills_via_ssh(node_id, tarball_b64, mode)
 
 
 @app.post("/agent/v1/skills/sync")
 def agent_skills_sync(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
-    """Agent-side skill sync — receives tarball from hub and installs."""
+    """Agent-side skill sync — receives tarball from hub and installs to both
+    ~/.claude/skills/ and ~/.codex/skills/."""
     _require_agent_auth(authorization)
     mode = str(payload.get("mode") or "append").strip().lower()
     tarball_b64 = str(payload.get("tarball_b64") or "")
     if not tarball_b64:
         raise HTTPException(400, "tarball_b64 is required")
-    return install_skills_from_b64(tarball_b64, mode)
+    return install_skills_to_remote(tarball_b64, mode)
 
 
 @app.get("/agent/v1/skills/raw")
@@ -2568,7 +2524,6 @@ def api_node_skills_pull(node_id: str) -> dict:
         return {"ok": True, "mode": "pull", "installed": [], "skipped": [],
                 "summary": "Local node — skills are already on the hub filesystem."}
 
-    # Try via agent API first
     tarball_bytes = None
     last_error = ""
     try:
@@ -2579,16 +2534,15 @@ def api_node_skills_pull(node_id: str) -> dict:
     if tarball_bytes:
         return install_skills_append_only(tarball_bytes)
 
-    # Fallback: direct SSH
     try:
         tarball_bytes, node_info = pull_skills_via_ssh(node_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(502, f"SSH pull failed: {e}" + (f" (also tried agent API: {last_error})" if last_error else ""))
+        raise HTTPException(502, f"SSH pull failed: {e}")
 
     if not tarball_bytes:
-        raise HTTPException(502, "Failed to retrieve skills from remote node" + (f": {last_error}" if last_error else ""))
+        raise HTTPException(502, f"Failed to retrieve skills from remote node: {last_error}" if last_error else "Failed to retrieve skills from remote node")
 
     return install_skills_append_only(tarball_bytes)
 

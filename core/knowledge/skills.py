@@ -1,14 +1,14 @@
-"""Global skill catalog from ~/.claude/skills/ + ~/.codex/skills/ + usage stats."""
+"""Global skill catalog from the hub's own ~/.lucid/skills/ directory."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 from core.common.text_encoding import read_utf8
-from core.terminal.sessions import CLAUDE_HOME, HOME_BASE
 
-SKILLS_DIR = CLAUDE_HOME / "skills"
-CODEX_SKILLS_DIR = HOME_BASE / ".codex" / "skills"
+_STATE_DIR = Path(os.environ.get("LUCID_STATE_DIR", "~/.lucid")).expanduser()
+HUB_SKILLS_DIR = _STATE_DIR / "skills"
 
 
 def _parse_skill_md(path: Path) -> Optional[dict]:
@@ -38,7 +38,7 @@ def _parse_skill_md(path: Path) -> Optional[dict]:
     }
 
 
-def _walk_skills(base: Path, origin: str, seen: set[str]) -> list[dict]:
+def _walk_skills(base: Path, seen: set[str]) -> list[dict]:
     """Recursively walk *base* for directories that contain a SKILL.md."""
     found: list[dict] = []
     try:
@@ -50,30 +50,57 @@ def _walk_skills(base: Path, origin: str, seen: set[str]) -> list[dict]:
         if not d.is_dir():
             continue
         if d.name.startswith("."):
-            # Still recurse into .system so built-in skills are discovered
             if d.name != ".system":
                 continue
         skill_md = d / "SKILL.md"
         if skill_md.exists():
             info = _parse_skill_md(skill_md)
             if info and info["name"] not in seen:
-                info["origin"] = origin
+                info["origin"] = "hub"
                 info["is_system"] = d.parent.name == ".system" or d.name == ".system"
                 found.append(info)
                 seen.add(info["name"])
-        # Recurse deeper in case skills live under nested directories
-        found.extend(_walk_skills(d, origin, seen))
+        found.extend(_walk_skills(d, seen))
     return found
 
 
+def _migrate_from_old_dirs() -> None:
+    """One-time: if hub skills dir is empty except for old claude/codex subdirs,
+    move their contents up to the flat structure."""
+    import shutil
+    old_claude = HUB_SKILLS_DIR / "claude"
+    old_codex = HUB_SKILLS_DIR / "codex"
+    if not old_claude.is_dir() and not old_codex.is_dir():
+        return
+    # Check if there are already skills in the flat dir
+    for item in HUB_SKILLS_DIR.iterdir():
+        if item.is_dir() and item.name not in ("claude", "codex"):
+            return  # already migrated
+
+    seen = set()
+    for src in (old_claude, old_codex):
+        if not src.is_dir():
+            continue
+        for item in src.iterdir():
+            dest = HUB_SKILLS_DIR / item.name
+            if item.name in seen or dest.exists():
+                continue
+            seen.add(item.name)
+            try:
+                if item.is_dir():
+                    shutil.copytree(item, dest, symlinks=True)
+                elif item.is_symlink():
+                    dest.symlink_to(item.readlink())
+                else:
+                    shutil.copy2(item, dest)
+            except (OSError, shutil.Error):
+                pass
+
+    shutil.rmtree(old_claude, ignore_errors=True)
+    shutil.rmtree(old_codex, ignore_errors=True)
+
+
 def list_all_skills() -> list[dict]:
-    skills: list[dict] = []
-    seen: set[str] = set()
-
-    if SKILLS_DIR.exists():
-        skills.extend(_walk_skills(SKILLS_DIR, "claude", seen))
-
-    if CODEX_SKILLS_DIR.exists():
-        skills.extend(_walk_skills(CODEX_SKILLS_DIR, "codex", seen))
-
-    return skills
+    HUB_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate_from_old_dirs()
+    return _walk_skills(HUB_SKILLS_DIR, set())

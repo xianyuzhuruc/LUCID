@@ -523,15 +523,11 @@
             <div>
               <!-- Skill row -->
               <div class="flex items-center gap-2 border dark:border-gray-700 rounded px-2 py-1.5 text-xs"
-                   :class="skillSelection.includes(sk.name + ':' + sk.origin) ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''">
+                   :class="skillSelection.includes(sk.name) ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''">
                 <input type="checkbox"
-                       :checked="skillSelection.includes(sk.name + ':' + sk.origin)"
+                       :checked="skillSelection.includes(sk.name)"
                        @click.stop="toggleSkillSelect(sk)"
                        class="shrink-0 w-3 h-3 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500">
-                <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono cursor-pointer"
-                      :class="sk.origin === 'claude' ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'"
-                      @click.stop="toggleSkillExpand(sk)"
-                      x-text="sk.origin"></span>
                 <span class="min-w-0 flex-1 font-medium text-gray-700 dark:text-gray-200 truncate cursor-pointer"
                       @click="toggleSkillExpand(sk)"
                       x-text="sk.name"></span>
@@ -539,29 +535,29 @@
                       x-text="sk.description"></span>
                 <span class="text-gray-300 dark:text-gray-600 text-[10px] cursor-pointer"
                       @click="toggleSkillExpand(sk)"
-                      x-text="skillExpanded === sk.name + ':' + sk.origin ? '▾' : '▸'"></span>
+                      x-text="skillExpanded === sk.name ? '▾' : '▸'"></span>
                 <button @click.stop="downloadSkillFolder(sk)"
                         class="shrink-0 rounded border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600"
                         title="Download skill folder"
                         x-text="'↓'"></button>
               </div>
               <!-- Expanded file list + editor -->
-              <div x-show="skillExpanded === sk.name + ':' + sk.origin"
+              <div x-show="skillExpanded === sk.name"
                    x-transition
                    class="border dark:border-gray-700 border-t-0 rounded-b px-3 py-2 mb-1 ml-2 text-xs">
-                <div x-show="!skillFileList[sk.name + ':' + sk.origin]"
+                <div x-show="!skillFileList[sk.name]"
                      class="text-gray-400 py-2">Loading files...</div>
-                <template x-for="f in (skillFileList[sk.name + ':' + sk.origin] || [])" :key="f.path">
+                <template x-for="f in (skillFileList[sk.name] || [])" :key="f.path">
                   <div class="flex items-center gap-2 border-b border-gray-100 dark:border-gray-700 py-1 last:border-b-0">
                     <span class="font-mono text-[11px] text-gray-500 dark:text-gray-400 min-w-0 flex-1 truncate" x-text="f.path"></span>
                     <span class="text-[10px] text-gray-400 shrink-0" x-text="formatSize(f.size)"></span>
                     <button @click="editSkillFile(sk, f)"
                             class="shrink-0 text-[10px] border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 rounded text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600"
-                            x-text="skillEditingPath === (sk.name + ':' + sk.origin + ':' + f.path) ? 'Close' : 'Edit'"></button>
+                            x-text="skillEditingPath === (sk.name + ':' + f.path) ? 'Close' : 'Edit'"></button>
                   </div>
                 </template>
                 <!-- Inline editor -->
-                <div x-show="skillEditingPath === sk.name + ':' + sk.origin + ':' + (skillEditingFile||{}).path"
+                <div x-show="skillEditingPath === sk.name + ':' + (skillEditingFile||{}).path"
                      class="mt-2 border dark:border-gray-600 rounded">
                   <div class="flex items-center gap-2 border-b dark:border-gray-600 px-2 py-1">
                     <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300 min-w-0 flex-1 truncate" x-text="skillEditingFile?.path"></span>
@@ -3639,11 +3635,11 @@ function superCliTerminal() {
     },
 
     selectAllSkills() {
-      this.skillSelection = this.filteredHubSkills.map(sk => sk.name + ':' + sk.origin);
+      this.skillSelection = this.filteredHubSkills.map(sk => sk.name);
     },
 
     toggleSkillSelect(sk) {
-      const key = sk.name + ':' + sk.origin;
+      const key = sk.name;
       const idx = this.skillSelection.indexOf(key);
       if (idx >= 0) {
         this.skillSelection = this.skillSelection.filter(s => s !== key);
@@ -3653,7 +3649,7 @@ function superCliTerminal() {
     },
 
     toggleSkillExpand(sk) {
-      const key = sk.name + ':' + sk.origin;
+      const key = sk.name;
       if (this.skillExpanded === key) {
         this.skillExpanded = '';
       } else {
@@ -3665,9 +3661,7 @@ function superCliTerminal() {
     async syncSkillsToNode(node, mode) {
       const nodeId = node.id;
       // Build list of selected skill names; null means "all"
-      const selected = this.skillSelection.length > 0
-        ? this.skillSelection.map(k => { const [name, orig] = k.split(':'); return { name, origin: orig }; })
-        : null;
+      const selected = this.skillSelection.length > 0 ? this.skillSelection : null;
       this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: true };
       this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: null };
       try {
@@ -3741,18 +3735,17 @@ function superCliTerminal() {
           fileList.push({ path: innerPath, content_b64: b64 });
         }
 
-        const origin = 'claude';
         const r = await fetch('/api/skills/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ origin, name: skillName, files: fileList }),
+          body: JSON.stringify({ name: skillName, files: fileList }),
         });
         const d = await r.json();
         if (!r.ok || !d.ok) {
           this.toast('Upload failed: ' + (d.detail || d.error || 'unknown error'));
           return;
         }
-        this.toast(`Uploaded ${d.written} files → ${origin}/skills/${skillName}`);
+        this.toast(`Uploaded ${d.written} files → skills/${skillName}`);
         await this.refreshSkills();
       } catch (e) {
         this.toast('Upload failed: ' + String(e.message || e));
@@ -3769,8 +3762,8 @@ function superCliTerminal() {
         return;
       }
       try {
-        const dirParam = sk.dir ? `&dir=${encodeURIComponent(sk.dir)}` : '';
-        const url = `/api/skills/${encodeURIComponent(sk.name)}/files?origin=${encodeURIComponent(sk.origin)}${dirParam}`;
+        const dirParam = sk.dir ? `?dir=${encodeURIComponent(sk.dir)}` : '';
+        const url = `/api/skills/${encodeURIComponent(sk.name)}/files${dirParam}`;
         const r = await fetch(url);
         const d = await r.json();
         if (!r.ok || !d.ok) {
@@ -3815,11 +3808,11 @@ function superCliTerminal() {
     },
 
     async loadSkillFiles(sk) {
-      const key = sk.name + ':' + sk.origin;
+      const key = sk.name;
       if (this.skillFileList[key]) return;
       try {
-        const dirParam = sk.dir ? `&dir=${encodeURIComponent(sk.dir)}` : '';
-        const r = await fetch(`/api/skills/${encodeURIComponent(sk.name)}/files?origin=${encodeURIComponent(sk.origin)}${dirParam}`);
+        const dirParam = sk.dir ? `?dir=${encodeURIComponent(sk.dir)}` : '';
+        const r = await fetch(`/api/skills/${encodeURIComponent(sk.name)}/files${dirParam}`);
         const d = await r.json();
         if (!r.ok || !d.ok) {
           this.skillFileList = { ...this.skillFileList, [key]: [] };
@@ -3834,7 +3827,7 @@ function superCliTerminal() {
     },
 
     editSkillFile(sk, f) {
-      const key = sk.name + ':' + sk.origin + ':' + f.path;
+      const key = sk.name + ':' + f.path;
       if (this.skillEditingPath === key) {
         // Close the editor
         this.skillEditingPath = '';
@@ -3859,7 +3852,7 @@ function superCliTerminal() {
         const r = await fetch(`/api/skills/${encodeURIComponent(sk.name)}/files`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ origin: sk.origin, path: filePath, content: content, dir: sk.dir }),
+          body: JSON.stringify({ path: filePath, content: content, dir: sk.dir }),
         });
         const d = await r.json();
         if (!r.ok || !d.ok) {
@@ -3867,7 +3860,7 @@ function superCliTerminal() {
           return;
         }
         // Update cached file list with new content
-        const key = sk.name + ':' + sk.origin;
+        const key = sk.name;
         const files = (this.skillFileList[key] || []).map(f => {
           if (f.path === filePath) {
             return { ...f, content_b64: btoa(unescape(encodeURIComponent(content))), size: d.size };
