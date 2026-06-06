@@ -517,6 +517,28 @@ def http_raw(node: NodeConfig, method: str, path: str, timeout_ms: int = 5000) -
         raise RuntimeError(f"node {node.id} request failed: {e}") from e
 
 
+def post_raw(node: NodeConfig, path: str, data: bytes, content_type: str = "application/octet-stream", timeout_ms: int = 60000) -> dict:
+    """POST raw bytes to a remote agent; returns the parsed JSON response."""
+    url = node.base_url + path
+    headers = {"Content-Type": content_type, "Accept": "application/json"}
+    token = node.auth_token
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with _open_agent_request(node, req, timeout=timeout_ms / 1000) as resp:
+            raw = decode_utf8(resp.read())
+    except urllib.error.HTTPError as e:
+        body = decode_utf8(e.read())[:2000]
+        raise RuntimeError(f"node {node.id} HTTP {e.code}: {body}") from e
+    except Exception as e:
+        raise RuntimeError(f"node {node.id} request failed: {e}") from e
+    try:
+        return json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {"ok": False, "error": raw[:500] if raw else "empty response", "node_id": node.id}
+
+
 def agent_get(node: NodeConfig, path: str, timeout_ms: int = 1200) -> dict:
     return _http_json(node, "GET", path, timeout_ms=timeout_ms)
 

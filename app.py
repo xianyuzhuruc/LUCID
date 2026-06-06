@@ -38,7 +38,7 @@ from core.dashboard import localstate
 from core.hub import nodes
 from core.hub.skills_sync import (
     build_agent_skills_tarball_raw,
-    build_skills_tarball_b64,
+    build_skills_tarball_bytes,
     install_skills_append_only,
     install_skills_to_remote,
     pull_skills_via_ssh,
@@ -2466,46 +2466,46 @@ def api_skills_file_write(name: str, payload: dict = Body(...)) -> dict:
 
 @app.post("/api/nodes/{node_id}/skills/sync")
 def api_node_skills_sync(node_id: str, payload: dict = Body(...)) -> dict:
-    """Sync hub skills to a node.  *mode* must be ``"append"`` or ``"replace"``.
-
-    Optional *names* (list of skill name strings) limits which skills to sync.
-    """
     mode = str(payload.get("mode") or "append").strip().lower()
     if mode not in ("append", "replace"):
         raise HTTPException(400, "mode must be 'append' or 'replace'")
-
-    names = payload.get("names") or None  # list of strings, or None for all
+    names = payload.get("names") or None
 
     node = _configured_node(node_id)
     if node.kind in ("local", "agent"):
-        tarball_b64 = build_skills_tarball_b64(names)
-        if not tarball_b64:
+        tarball = build_skills_tarball_bytes(names)
+        if not tarball:
             return {"ok": False, "error": "No skills found on hub"}
-        return install_skills_to_remote(tarball_b64, mode)
+        return install_skills_to_remote(tarball, mode)
 
-    tarball_b64 = build_skills_tarball_b64(names)
-    if not tarball_b64:
+    tarball = build_skills_tarball_bytes(names)
+    if not tarball:
         return {"ok": False, "error": "No skills found on hub"}
 
-    # Try agent API first; fall back to SSH on failure
-    result = nodes.forward(node_id, "POST", "/agent/v1/skills/sync",
-                           {"mode": mode, "tarball_b64": tarball_b64})
-    if result.get("ok"):
-        return result
+    # Send raw bytes directly (not JSON-encoded base64)
+    try:
+        path = f"/agent/v1/skills/sync?mode={mode}"
+        return nodes.post_raw(node, path, tarball,
+                              content_type="application/octet-stream", timeout_ms=60000)
+    except Exception:
+        pass
 
-    return sync_skills_via_ssh(node_id, tarball_b64, mode)
+    # Fallback: SSH
+    b64 = base64.b64encode(tarball).decode("ascii")
+    return sync_skills_via_ssh(node_id, b64, mode)
 
 
 @app.post("/agent/v1/skills/sync")
-def agent_skills_sync(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
-    """Agent-side skill sync — receives tarball from hub and installs to both
-    ~/.claude/skills/ and ~/.codex/skills/."""
+async def agent_skills_sync(request: Request, authorization: str | None = Header(None)) -> dict:
+    """Agent-side — receives raw gzipped tarball and installs to both dirs."""
     _require_agent_auth(authorization)
-    mode = str(payload.get("mode") or "append").strip().lower()
-    tarball_b64 = str(payload.get("tarball_b64") or "")
-    if not tarball_b64:
-        raise HTTPException(400, "tarball_b64 is required")
-    return install_skills_to_remote(tarball_b64, mode)
+    raw = await request.body()
+    mode = request.query_params.get("mode", "append")
+    if mode not in ("append", "replace"):
+        raise HTTPException(400, "mode must be 'append' or 'replace'")
+    if not raw:
+        raise HTTPException(400, "request body is required")
+    return install_skills_to_remote(raw, mode)
 
 
 @app.get("/agent/v1/skills/raw")

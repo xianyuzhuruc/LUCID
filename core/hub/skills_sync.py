@@ -71,10 +71,13 @@ def _run(client: paramiko.SSHClient, command: str, timeout: int = 120) -> str:
 # ---------------------------------------------------------------------------
 
 def build_skills_tarball_b64(names: list[str] | None = None) -> str:
-    """Base64-encoded gzipped tarball of the hub skill directories.
+    """Base64-encoded gzipped tarball (for SSH fallback)."""
+    raw = build_skills_tarball_bytes(names)
+    return base64.b64encode(raw).decode("ascii") if raw else ""
 
-    If *names* is provided, only include those skill directory names.
-    """
+
+def build_skills_tarball_bytes(names: list[str] | None = None) -> bytes:
+    """Raw gzipped tarball of hub skill directories (for direct binary transfer)."""
     allowed: set[str] | None = None
     if names is not None:
         allowed = set()
@@ -116,14 +119,20 @@ def build_skills_tarball_b64(names: list[str] | None = None) -> str:
                 tar.add(item, arcname=item.name, recursive=True)
             elif item.is_file() and "" in needed:
                 tar.add(item, arcname=item.name)
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+    return buf.getvalue()
+
+
+def build_skills_tarball_b64(names: list[str] | None = None) -> str:
+    """Base64-encoded gzipped tarball (for SSH fallback)."""
+    raw = build_skills_tarball_bytes(names)
+    return base64.b64encode(raw).decode("ascii") if raw else ""
 
 
 def build_agent_skills_tarball_raw() -> bytes:
     """Build a tarball of the **agent's** actual skill directories.
 
-    This is what the agent-side /agent/v1/skills/raw endpoint calls —
-    it must tar up ~/.claude/skills/ and ~/.codex/skills/, NOT the hub dir.
+    Called by the agent-side /agent/v1/skills/raw endpoint —
+    it tars up ~/.claude/skills/ and ~/.codex/skills/, NOT the hub dir.
     """
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -133,7 +142,6 @@ def build_agent_skills_tarball_raw() -> bytes:
             for item in sorted(skills_dir.iterdir()):
                 if item.name.startswith(".") and item.name not in (".system",):
                     continue
-                # Only include skill dirs (those with SKILL.md) or their parents
                 arcname = item.name
                 if item.is_dir():
                     tar.add(item, arcname=arcname, recursive=True)
@@ -151,19 +159,15 @@ def build_skills_tarball_raw() -> bytes:
 # Install on remote agent (hub → remote)
 # ---------------------------------------------------------------------------
 
-def install_skills_to_remote(tarball_b64: str, mode: str) -> dict:
+def install_skills_to_remote(tarball_bytes: bytes, mode: str) -> dict:
     """Extract a tarball to both remote skill directories.
 
     Called by the agent-side ``/agent/v1/skills/sync`` endpoint.
+    Accepts raw gzipped tarball bytes.
     """
     if mode not in ("append", "replace"):
         return {"ok": False, "error": f"Invalid mode: {mode}"}
-
-    try:
-        raw = base64.b64decode(tarball_b64)
-    except Exception as e:
-        return {"ok": False, "error": f"Invalid tarball base64: {e}"}
-    if not raw:
+    if not tarball_bytes:
         return {"ok": False, "error": "Empty tarball"}
 
     import shutil
@@ -177,7 +181,7 @@ def install_skills_to_remote(tarball_b64: str, mode: str) -> dict:
         d.mkdir(parents=True, exist_ok=True)
 
     synced = []
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
+    with tarfile.open(fileobj=io.BytesIO(tarball_bytes), mode="r:gz") as tar:
         for member in tar.getmembers():
             if not member.name or member.name.startswith(".") and "/" not in member.name:
                 continue
