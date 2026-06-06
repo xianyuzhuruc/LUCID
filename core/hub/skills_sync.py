@@ -119,6 +119,29 @@ def build_skills_tarball_b64(names: list[str] | None = None) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def build_agent_skills_tarball_raw() -> bytes:
+    """Build a tarball of the **agent's** actual skill directories.
+
+    This is what the agent-side /agent/v1/skills/raw endpoint calls —
+    it must tar up ~/.claude/skills/ and ~/.codex/skills/, NOT the hub dir.
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for skills_dir in REMOTE_SKILL_DIRS:
+            if not skills_dir.exists():
+                continue
+            for item in sorted(skills_dir.iterdir()):
+                if item.name.startswith(".") and item.name not in (".system",):
+                    continue
+                # Only include skill dirs (those with SKILL.md) or their parents
+                arcname = item.name
+                if item.is_dir():
+                    tar.add(item, arcname=arcname, recursive=True)
+                elif item.is_file():
+                    tar.add(item, arcname=arcname)
+    return buf.getvalue()
+
+
 def build_skills_tarball_raw() -> bytes:
     b64 = build_skills_tarball_b64()
     return base64.b64decode(b64) if b64 else b""

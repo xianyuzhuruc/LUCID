@@ -37,8 +37,8 @@ from core.conversations import codex, history, search, transcripts
 from core.dashboard import localstate
 from core.hub import nodes
 from core.hub.skills_sync import (
+    build_agent_skills_tarball_raw,
     build_skills_tarball_b64,
-    build_skills_tarball_raw,
     install_skills_append_only,
     install_skills_to_remote,
     pull_skills_via_ssh,
@@ -2512,7 +2512,7 @@ def agent_skills_sync(payload: dict = Body(...), authorization: str | None = Hea
 def agent_skills_raw(authorization: str | None = Header(None)) -> Response:
     """Return a gzipped tarball of the agent's skill directories."""
     _require_agent_auth(authorization)
-    raw = build_skills_tarball_raw()
+    raw = build_agent_skills_tarball_raw()
     return Response(content=raw, media_type="application/gzip")
 
 
