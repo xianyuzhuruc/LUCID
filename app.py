@@ -2504,7 +2504,7 @@ def api_node_skills_sync(node_id: str, payload: dict = Body(...)) -> dict:
     names = payload.get("names") or None
 
     node = _configured_node(node_id)
-    if node.kind in ("local", "agent"):
+    if _is_local_enabled_node(node):
         tarball = build_skills_tarball_bytes(names)
         if not tarball:
             return {"ok": False, "error": "No skills found on hub"}
@@ -2552,9 +2552,13 @@ def agent_skills_raw(authorization: str | None = Header(None)) -> Response:
 def api_node_skills_pull(node_id: str) -> dict:
     """Pull skills from a remote node into the hub (append-only)."""
     node = _configured_node(node_id)
-    if node.kind in ("local", "agent"):
-        return {"ok": True, "mode": "pull", "installed": [], "skipped": [],
-                "summary": "Local node — skills are already on the hub filesystem."}
+    if _is_local_enabled_node(node):
+        tarball_bytes = build_agent_skills_tarball_raw()
+        result = install_skills_append_only(tarball_bytes)
+        if result.get("ok"):
+            result["node_id"] = node.id
+            result["summary"] = result.get("summary") or "Pulled local skills into hub."
+        return result
 
     tarball_bytes = None
     last_error = ""

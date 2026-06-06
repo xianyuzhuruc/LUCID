@@ -584,19 +584,19 @@
           </template>
         </div>
       </div>
-      <!-- Right: sync to SSH nodes -->
+      <!-- Right: sync to nodes -->
       <div class="lg:col-span-1 border dark:border-gray-700 rounded p-3">
         <h3 class="text-xs font-semibold mb-2">Sync to node</h3>
-        <div x-show="!remoteNodes.length" class="border border-dashed dark:border-gray-600 rounded p-4 text-xs text-gray-400 dark:text-gray-500">
-          No remote SSH nodes configured
+        <div x-show="!skillNodes.length" class="border border-dashed dark:border-gray-600 rounded p-4 text-xs text-gray-400 dark:text-gray-500">
+          No nodes configured
         </div>
-        <div class="space-y-2 max-h-80 overflow-y-auto" x-show="remoteNodes.length > 0">
-          <template x-for="n in remoteNodes" :key="n.id">
+        <div class="space-y-2 max-h-80 overflow-y-auto" x-show="skillNodes.length > 0">
+          <template x-for="n in skillNodes" :key="n.id">
             <div class="border dark:border-gray-700 rounded p-2 text-xs">
               <div class="flex items-center justify-between gap-2 mb-1.5">
                 <div class="min-w-0">
                   <div class="font-semibold truncate text-gray-700 dark:text-gray-200" x-text="n.name || n.id"></div>
-                  <div class="text-gray-400 dark:text-gray-500 truncate" x-text="(n.user ? n.user + '@' : '') + (n.host || n.ssh_host)"></div>
+                  <div class="text-gray-400 dark:text-gray-500 truncate" x-text="nodeSubtitle(n)"></div>
                 </div>
                 <span class="px-2 py-0.5 rounded-full text-[10px] shrink-0"
                       :class="n.health === 'healthy' ? 'bg-emerald-100 text-emerald-700' : n.health === 'stale' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
@@ -1725,8 +1725,8 @@ function superCliTerminal() {
       });
     },
 
-    get remoteNodes() {
-      return this.nodes.filter(n => n.kind === 'ssh' && !this.isLocalNode(n));
+    get skillNodes() {
+      return this.nodes.filter(n => n.kind === 'ssh' || this.isLocalNode(n));
     },
 
     get filteredHubSkills() {
@@ -3644,7 +3644,7 @@ function superCliTerminal() {
 
     ensureSkillNodeState() {
       const next = { ...this.skillSyncBusy };
-      for (const n of this.remoteNodes) {
+      for (const n of this.skillNodes) {
         if (n.id && !(n.id in next)) next[n.id] = false;
       }
       this.skillSyncBusy = next;
