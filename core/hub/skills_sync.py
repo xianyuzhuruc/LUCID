@@ -23,6 +23,17 @@ from core.terminal.sessions import CLAUDE_HOME, HOME_BASE
 REMOTE_SKILL_DIRS = (CLAUDE_HOME / "skills", HOME_BASE / ".codex" / "skills")
 
 
+def _normalized_tar_member_name(name: str) -> str:
+    """Return a safe relative tar member name, or an empty string to skip it."""
+    clean = str(name or "").replace("\\", "/").lstrip("/")
+    while clean.startswith("./"):
+        clean = clean[2:]
+    parts = [part for part in clean.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return ""
+    return "/".join(parts)
+
+
 def _load_raw_ssh_history() -> list[dict]:
     try:
         raw = json.loads(SSH_HISTORY_PATH.read_text(encoding="utf-8"))
@@ -88,37 +99,55 @@ def build_skills_tarball_bytes(names: list[str] | None = None) -> bytes:
         if not allowed:
             return ""
 
+    def iter_skill_dirs() -> list[Path]:
+        skill_dirs: list[Path] = []
+        if not HUB_SKILLS_DIR.exists():
+            return skill_dirs
+        for skill_md in HUB_SKILLS_DIR.rglob("SKILL.md"):
+            skill_dir = skill_md.parent
+            rel = skill_dir.relative_to(HUB_SKILLS_DIR)
+            if any(part.startswith(".") and part != ".system" for part in rel.parts):
+                continue
+            if allowed is not None and skill_dir.name not in allowed:
+                continue
+            skill_dirs.append(skill_dir)
+        return sorted(skill_dirs)
+
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         if not HUB_SKILLS_DIR.exists():
             return ""
-        # Only include skill directories (those containing SKILL.md) or
-        # parent directories of nested skills.  Collect the set of paths
-        # that are needed.
-        needed: set[str] = set()
-        for d in HUB_SKILLS_DIR.rglob("SKILL.md"):
-            rel = d.relative_to(HUB_SKILLS_DIR)
-            # Add every prefix directory
-            for p in rel.parents:
-                needed.add(str(p))
-        # Also add any loose files at the root
-        for item in HUB_SKILLS_DIR.iterdir():
-            if item.is_file() and not item.name.startswith("."):
-                needed.add("")  # marker for root files
+        if allowed is not None:
+            for skill_dir in iter_skill_dirs():
+                arcname = str(skill_dir.relative_to(HUB_SKILLS_DIR))
+                tar.add(skill_dir, arcname=arcname, recursive=True)
 
-        for item in sorted(HUB_SKILLS_DIR.iterdir()):
-            if item.name.startswith(".") and item.name not in (".system",):
-                continue
-            if allowed is not None and item.is_dir() and item.name not in allowed:
-                continue
-            # Only include if this item or something under it is needed
-            if item.is_dir():
-                rel = str(Path(item.name))
-                if not any(n == rel or n.startswith(rel + "/") for n in needed):
+        else:
+            # Only include skill directories (those containing SKILL.md) or
+            # parent directories of nested skills.  Collect the set of paths
+            # that are needed.
+            needed: set[str] = set()
+            for skill_dir in iter_skill_dirs():
+                rel = skill_dir.relative_to(HUB_SKILLS_DIR) / "SKILL.md"
+                # Add every prefix directory
+                for p in rel.parents:
+                    needed.add(str(p))
+            # Also add any loose files at the root
+            for item in HUB_SKILLS_DIR.iterdir():
+                if item.is_file() and not item.name.startswith("."):
+                    needed.add("")  # marker for root files
+
+            for item in sorted(HUB_SKILLS_DIR.iterdir()):
+                if item.name.startswith(".") and item.name not in (".system",):
                     continue
-                tar.add(item, arcname=item.name, recursive=True)
-            elif item.is_file() and "" in needed:
-                tar.add(item, arcname=item.name)
+                # Only include if this item or something under it is needed
+                if item.is_dir():
+                    rel = str(Path(item.name))
+                    if not any(n == rel or n.startswith(rel + "/") for n in needed):
+                        continue
+                    tar.add(item, arcname=item.name, recursive=True)
+                elif item.is_file() and "" in needed:
+                    tar.add(item, arcname=item.name)
     return buf.getvalue()
 
 
@@ -183,11 +212,13 @@ def install_skills_to_remote(tarball_bytes: bytes, mode: str) -> dict:
     synced = []
     with tarfile.open(fileobj=io.BytesIO(tarball_bytes), mode="r:gz") as tar:
         for member in tar.getmembers():
-            if not member.name or member.name.startswith(".") and "/" not in member.name:
+            member_name = _normalized_tar_member_name(member.name)
+            if not member_name or member_name.startswith(".") and "/" not in member_name:
                 continue
+            member.name = member_name
             # Extract into each target dir
             for target_dir in REMOTE_SKILL_DIRS:
-                target_path = (target_dir / member.name).resolve()
+                target_path = (target_dir / member_name).resolve()
                 if not str(target_path).startswith(str(target_dir.resolve())):
                     continue
                 tar.extract(member, path=str(target_dir), set_attrs=False)
@@ -221,13 +252,15 @@ def install_skills_append_only(tarball_bytes: bytes) -> dict:
 
     try:
         with tarfile.open(fileobj=io.BytesIO(tarball_bytes), mode="r:gz") as tar:
+            members = [(member, _normalized_tar_member_name(member.name))
+                       for member in tar.getmembers()]
             # Find which skills are new
             new_skills: set[str] = set()
-            for member in tar.getmembers():
-                if not (member.name.endswith("/SKILL.md") or
-                        (member.name.endswith("SKILL.md") and "/" in member.name)):
+            for _member, member_name in members:
+                if not (member_name.endswith("/SKILL.md") or
+                        (member_name.endswith("SKILL.md") and "/" in member_name)):
                     continue
-                skill_name = member.name.split("/")[0]
+                skill_name = member_name.split("/")[0]
                 if not skill_name or skill_name.startswith("."):
                     continue
                 if skill_name not in existing:
@@ -244,11 +277,12 @@ def install_skills_append_only(tarball_bytes: bytes) -> dict:
                 }
 
             # Extract only files belonging to new skills
-            for member in tar.getmembers():
-                skill_name = member.name.split("/")[0]
+            for member, member_name in members:
+                skill_name = member_name.split("/")[0] if member_name else ""
                 if not skill_name or skill_name not in new_skills:
                     continue
-                target_path = (HUB_SKILLS_DIR / member.name).resolve()
+                member.name = member_name
+                target_path = (HUB_SKILLS_DIR / member_name).resolve()
                 if not str(target_path).startswith(str(HUB_SKILLS_DIR.resolve())):
                     continue
                 tar.extract(member, path=str(HUB_SKILLS_DIR), set_attrs=False)
@@ -369,10 +403,15 @@ def pull_skills_via_ssh(node_id: str) -> tuple[bytes, dict]:
     client = _ssh_connect(node, password)
     try:
         remote_tmp = "/tmp/lucid-skills-pull.tar.gz"
-        # Merge skills from both dirs, deduplicating by name
+        # Merge skills from both dirs while stripping the root skills path so
+        # the hub receives entries like "skill-name/SKILL.md".
         _run(client, (
             f"rm -f {remote_tmp} && cd $HOME && "
-            f"(tar czf {remote_tmp} .claude/skills .codex/skills 2>/dev/null || true)"
+            f"mkdir -p .lucid/skill-pull-tmp && "
+            f"cp -a .claude/skills/. .lucid/skill-pull-tmp/ 2>/dev/null || true; "
+            f"cp -a .codex/skills/. .lucid/skill-pull-tmp/ 2>/dev/null || true; "
+            f"tar czf {remote_tmp} -C .lucid/skill-pull-tmp . 2>/dev/null || true; "
+            f"rm -rf .lucid/skill-pull-tmp"
         ))
 
         buf = io.BytesIO()
