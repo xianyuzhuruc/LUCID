@@ -37,45 +37,42 @@ def _parse_skill_md(path: Path) -> Optional[dict]:
     }
 
 
+def _walk_skills(base: Path, origin: str, seen: set[str]) -> list[dict]:
+    """Recursively walk *base* for directories that contain a SKILL.md."""
+    found: list[dict] = []
+    try:
+        entries = sorted(base.iterdir())
+    except (PermissionError, OSError):
+        return found
+
+    for d in entries:
+        if not d.is_dir():
+            continue
+        if d.name.startswith("."):
+            # Still recurse into .system so built-in skills are discovered
+            if d.name != ".system":
+                continue
+        skill_md = d / "SKILL.md"
+        if skill_md.exists():
+            info = _parse_skill_md(skill_md)
+            if info and info["name"] not in seen:
+                info["origin"] = origin
+                info["is_system"] = d.parent.name == ".system" or d.name == ".system"
+                found.append(info)
+                seen.add(info["name"])
+        # Recurse deeper in case skills live under nested directories
+        found.extend(_walk_skills(d, origin, seen))
+    return found
+
+
 def list_all_skills() -> list[dict]:
     skills: list[dict] = []
-    seen_names: set[str] = set()
+    seen: set[str] = set()
 
-    # Claude Code skills
     if SKILLS_DIR.exists():
-        for d in sorted(SKILLS_DIR.iterdir()):
-            if not d.is_dir() or d.name.startswith("."):
-                continue
-            skill_md = d / "SKILL.md"
-            if not skill_md.exists():
-                continue
-            info = _parse_skill_md(skill_md)
-            if info:
-                info["origin"] = "claude"
-                info["is_system"] = False
-                skills.append(info)
-                seen_names.add(info["name"])
+        skills.extend(_walk_skills(SKILLS_DIR, "claude", seen))
 
-    # Codex skills (user-installed + .system built-ins)
     if CODEX_SKILLS_DIR.exists():
-        for d in sorted(CODEX_SKILLS_DIR.iterdir()):
-            if not d.is_dir():
-                continue
-            is_system = d.name == ".system"
-            sub_dirs = [d] if not is_system else [x for x in d.iterdir() if x.is_dir()]
-            for sd in sub_dirs:
-                skill_md = sd / "SKILL.md"
-                if not skill_md.exists():
-                    continue
-                info = _parse_skill_md(skill_md)
-                if not info:
-                    continue
-                if info["name"] in seen_names:
-                    # Already covered by Claude side; don't double-list
-                    continue
-                info["origin"] = "codex-system" if is_system else "codex"
-                info["is_system"] = is_system
-                skills.append(info)
-                seen_names.add(info["name"])
+        skills.extend(_walk_skills(CODEX_SKILLS_DIR, "codex", seen))
 
     return skills

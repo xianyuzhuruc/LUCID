@@ -507,12 +507,21 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <!-- Left: hub skills list -->
       <div class="lg:col-span-2 border dark:border-gray-700 rounded p-3">
-        <h3 class="text-xs font-semibold mb-2">Hub skills</h3>
+        <div class="flex items-center gap-2 mb-2">
+          <h3 class="text-xs font-semibold">Hub skills</h3>
+          <input type="text" placeholder="Filter..." x-model="skillSearch"
+                 class="flex-1 min-w-0 text-xs border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                 @input="skillSearch = $event.target.value">
+          <span class="text-[10px] text-gray-400" x-text="filteredHubSkills.length + '/' + hubSkills.length"></span>
+        </div>
         <div x-show="hubSkills.length === 0" class="border border-dashed dark:border-gray-600 rounded p-4 text-xs text-gray-400 dark:text-gray-500">
           No skills found on hub
         </div>
-        <div class="max-h-80 overflow-y-auto space-y-1" x-show="hubSkills.length > 0">
-          <template x-for="sk in hubSkills" :key="sk.name">
+        <div x-show="hubSkills.length > 0 && filteredHubSkills.length === 0" class="border border-dashed dark:border-gray-600 rounded p-4 text-xs text-gray-400 dark:text-gray-500">
+          No skills match "<span x-text="skillSearch"></span>"
+        </div>
+        <div class="max-h-80 overflow-y-auto space-y-1" x-show="filteredHubSkills.length > 0">
+          <template x-for="sk in filteredHubSkills" :key="sk.name">
             <div class="flex items-center gap-2 border dark:border-gray-700 rounded px-2 py-1.5 text-xs">
               <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono"
                     :class="sk.origin === 'claude' ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'"
@@ -548,11 +557,11 @@
               <div class="flex gap-1.5">
                 <button @click="syncSkillsToNode(n, 'append')"
                         :disabled="skillSyncBusy[n.id]"
-                        class="flex-1 text-[10px] border border-blue-300 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40"
+                        class="flex-1 text-[10px] border border-blue-300 bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40"
                         x-text="skillSyncBusy[n.id] ? '...' : 'Append'"></button>
                 <button @click="syncSkillsToNode(n, 'replace')"
                         :disabled="skillSyncBusy[n.id]"
-                        class="flex-1 text-[10px] border border-red-300 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-2 py-1 rounded hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-40"
+                        class="flex-1 text-[10px] border border-red-300 bg-white dark:bg-gray-700 text-red-700 dark:text-red-400 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
                         x-text="skillSyncBusy[n.id] ? '...' : 'Replace'"></button>
               </div>
               <div x-show="skillSyncResults[n.id]" class="mt-1.5 rounded px-2 py-1 text-[10px]"
@@ -1289,6 +1298,15 @@
 </div>
 
 <script>
+function fuzzyMatch(query, haystack) {
+  // Character-sequence fuzzy match: every char of query must appear in order in haystack.
+  let qi = 0;
+  for (let i = 0; i < haystack.length && qi < query.length; i++) {
+    if (haystack[i] === query[qi]) qi++;
+  }
+  return qi === query.length;
+}
+
 function superCliTerminal() {
   const SYNTAX_DEFS = {
     md: { flags: 'm', patterns: [
@@ -1509,6 +1527,7 @@ function superCliTerminal() {
     skillSyncResults: {},
     skillUploadOrigin: 'claude',
     uploadingSkill: false,
+    skillSearch: '',
     showSettings: false,
     theme: 'light',
     syntaxTheme: 'lucid-dark',
@@ -1643,6 +1662,15 @@ function superCliTerminal() {
 
     get remoteNodes() {
       return this.nodes.filter(n => n.kind === 'ssh' && !this.isLocalNode(n));
+    },
+
+    get filteredHubSkills() {
+      const q = (this.skillSearch || '').trim().toLowerCase();
+      if (!q) return this.hubSkills;
+      return this.hubSkills.filter(sk => {
+        const haystack = ((sk.name || '') + ' ' + (sk.description || '')).toLowerCase();
+        return fuzzyMatch(q, haystack);
+      });
     },
 
     attentionState(w) {
