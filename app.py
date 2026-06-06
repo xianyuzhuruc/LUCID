@@ -38,7 +38,10 @@ from core.dashboard import localstate
 from core.hub import nodes
 from core.hub.skills_sync import (
     build_skills_tarball_b64,
+    build_skills_tarball_raw,
+    install_skills_append_only,
     install_skills_from_b64,
+    pull_skills_via_ssh,
     sync_skills_via_ssh,
 )
 from core.hub.ssh_deploy import DeployRequest, deploy_agent
@@ -2443,23 +2446,78 @@ def api_skills_files(name: str, origin: str = "claude") -> dict:
     return {"ok": True, "name": name, "origin": origin, "files": files}
 
 
+@app.put("/api/skills/{name}/files")
+def api_skills_file_write(name: str, payload: dict = Body(...)) -> dict:
+    """Write a single file inside a skill directory on the hub.
+
+    Expected payload::
+
+        {
+            "origin": "claude" | "codex",
+            "path": "SKILL.md",
+            "content": "new file content here"
+        }
+    """
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(404, f"invalid skill name: {name}")
+    origin = str(payload.get("origin") or "claude").strip().lower()
+    rel = str(payload.get("path") or "").strip()
+    content = str(payload.get("content") or "")
+
+    if not rel:
+        raise HTTPException(400, "path is required")
+    if ".." in rel:
+        raise HTTPException(400, f"invalid file path: {rel}")
+
+    source_dir = skills.SKILLS_DIR if origin == "claude" else skills.CODEX_SKILLS_DIR
+    skill_dir = source_dir / name
+    if not skill_dir.is_dir():
+        raise HTTPException(404, f"skill not found: {name}")
+
+    dest = (skill_dir / rel).resolve()
+    if not str(dest).startswith(str(skill_dir.resolve())):
+        raise HTTPException(400, f"path escape: {rel}")
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        write_utf8(str(dest), content)
+        stat = dest.stat()
+    except PermissionError as e:
+        raise HTTPException(403, f"file is not writable: {dest}") from e
+    except OSError as e:
+        raise HTTPException(400, f"file write failed: {e}") from e
+
+    return {
+        "ok": True,
+        "path": str(dest),
+        "name": dest.name,
+        "size": stat.st_size,
+        "mtime_ms": int(stat.st_mtime * 1000),
+    }
+
+
 @app.post("/api/nodes/{node_id}/skills/sync")
 def api_node_skills_sync(node_id: str, payload: dict = Body(...)) -> dict:
-    """Sync hub skills to a node.  *mode* must be ``"append"`` or ``"replace"``."""
+    """Sync hub skills to a node.  *mode* must be ``"append"`` or ``"replace"``.
+
+    Optional *names* (list of ``{name, origin}``) limits which skills to sync.
+    """
     mode = str(payload.get("mode") or "append").strip().lower()
     if mode not in ("append", "replace"):
         raise HTTPException(400, "mode must be 'append' or 'replace'")
 
+    names = payload.get("names") or None  # list of {name, origin}, or None for all
+
     node = _configured_node(node_id)
     if node.kind in ("local", "agent"):
         # Skills are already local on the hub
-        tarball_b64 = build_skills_tarball_b64()
+        tarball_b64 = build_skills_tarball_b64(names)
         if not tarball_b64:
             return {"ok": False, "error": "No skills found on hub"}
         return install_skills_from_b64(tarball_b64, mode)
 
     # Build the tarball on the hub and send it to the agent
-    tarball_b64 = build_skills_tarball_b64()
+    tarball_b64 = build_skills_tarball_b64(names)
     if not tarball_b64:
         return {"ok": False, "error": "No skills found on hub"}
 
@@ -2483,6 +2541,41 @@ def agent_skills_sync(payload: dict = Body(...), authorization: str | None = Hea
     if not tarball_b64:
         raise HTTPException(400, "tarball_b64 is required")
     return install_skills_from_b64(tarball_b64, mode)
+
+
+@app.get("/agent/v1/skills/raw")
+def agent_skills_raw(authorization: str | None = Header(None)) -> Response:
+    """Return a gzipped tarball of the agent's skill directories."""
+    _require_agent_auth(authorization)
+    raw = build_skills_tarball_raw()
+    return Response(content=raw, media_type="application/gzip")
+
+
+@app.post("/api/nodes/{node_id}/skills/pull")
+def api_node_skills_pull(node_id: str) -> dict:
+    """Pull skills from a remote node into the hub (append-only)."""
+    node = _configured_node(node_id)
+    if node.kind in ("local", "agent"):
+        return {"ok": True, "mode": "pull", "installed": [], "skipped": [],
+                "summary": "Local node — skills are already on the hub filesystem."}
+
+    # Try via agent API first
+    try:
+        resp = nodes._http_raw(node, "GET", "/agent/v1/skills/raw", timeout_ms=15000)
+        tarball_bytes = resp[0]
+        return install_skills_append_only(tarball_bytes)
+    except Exception:
+        pass
+
+    # Fallback: direct SSH
+    try:
+        tarball_bytes, node_info = pull_skills_via_ssh(node_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"SSH pull failed: {e}")
+
+    return install_skills_append_only(tarball_bytes)
 
 
 @app.get("/api/memory")

@@ -68,21 +68,39 @@ def _run(client: paramiko.SSHClient, command: str, timeout: int = 120) -> str:
     return out + err
 
 
-def build_skills_tarball_b64() -> str:
+def build_skills_tarball_b64(names: list[dict] | None = None) -> str:
     """Create a base64-encoded gzipped tarball of the hub's skill directories.
+
+    If *names* is provided, only include skills matching ``{name, origin}`` entries.
 
     Includes ``~/.claude/skills/*`` and ``~/.codex/skills/*`` (skipping
     dot-prefixed entries).
     """
+    # Build allow-list if names filter is provided (empty list = all skills)
+    allowed: set[tuple[str, str]] | None = None
+    if names is not None:
+        allowed = set()
+        for item in names:
+            n = str(item.get("name") or "").strip()
+            o = str(item.get("origin") or "claude").strip().lower()
+            if n:
+                allowed.add((n, o))
+        if not allowed:
+            return ""  # no skills selected
+
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for skills_dir in (SKILLS_DIR, CODEX_SKILLS_DIR):
+        for skills_dir, origin_tag in ((SKILLS_DIR, "claude"), (CODEX_SKILLS_DIR, "codex")):
             if not skills_dir.exists():
                 continue
             for item in sorted(skills_dir.iterdir()):
-                # Skip common hidden files/dirs, but keep .system skills
                 if item.name.startswith(".") and item.name not in (".system",):
                     continue
+                # If filtering, skip skills not in the allowed set
+                if allowed is not None and item.is_dir():
+                    skill_name = item.name
+                    if (skill_name, origin_tag) not in allowed:
+                        continue
                 arcname = f"{skills_dir.name}/{item.name}"
                 if item.is_dir():
                     tar.add(item, arcname=arcname, recursive=True)
@@ -221,6 +239,194 @@ def sync_skills_via_ssh(node_id: str, tarball_b64: str, mode: str) -> dict:
             "node_id": node_id,
             "summary": f"{'Replaced' if mode == 'replace' else 'Appended'} hub skills on {node_id} ({node.host or node.ssh_host}) → ~/.claude/skills/ and ~/.codex/skills/",
         }
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def build_skills_tarball_raw(names: list[dict] | None = None) -> bytes:
+    """Return a gzipped tarball of hub skill directories as raw bytes."""
+    allowed: set[tuple[str, str]] | None = None
+    if names is not None:
+        allowed = set()
+        for item in names:
+            n = str(item.get("name") or "").strip()
+            o = str(item.get("origin") or "claude").strip().lower()
+            if n:
+                allowed.add((n, o))
+        if not allowed:
+            return b""  # no skills selected
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for skills_dir, origin_tag in ((SKILLS_DIR, "claude"), (CODEX_SKILLS_DIR, "codex")):
+            if not skills_dir.exists():
+                continue
+            for item in sorted(skills_dir.iterdir()):
+                if item.name.startswith(".") and item.name not in (".system",):
+                    continue
+                if allowed is not None and item.is_dir():
+                    if (item.name, origin_tag) not in allowed:
+                        continue
+                arcname = f"{skills_dir.name}/{item.name}"
+                if item.is_dir():
+                    tar.add(item, arcname=arcname, recursive=True)
+                elif item.is_file():
+                    tar.add(item, arcname=arcname)
+    return buf.getvalue()
+
+
+def hub_skill_names() -> set[str]:
+    """Return the set of skill names already installed on the hub."""
+    names: set[str] = set()
+    for base in (SKILLS_DIR, CODEX_SKILLS_DIR):
+        if not base.exists():
+            continue
+        for d in base.iterdir():
+            if d.is_dir() and (d / "SKILL.md").exists():
+                names.add(d.name)
+            # Recurse one extra level for .system etc
+            if d.is_dir() and d.name.startswith("."):
+                for sd in d.iterdir():
+                    if sd.is_dir() and (sd / "SKILL.md").exists():
+                        names.add(sd.name)
+    return names
+
+
+def install_skills_append_only(tarball_bytes: bytes) -> dict:
+    """Extract a tarball to hub, skipping skills that already exist.
+
+    Only installs skill directories that are *not* already present on the hub
+    (checked by directory name + existence of SKILL.md).
+    """
+    existing = hub_skill_names()
+    if not tarball_bytes:
+        return {"ok": False, "error": "Empty tarball"}
+
+    claude_skills = SKILLS_DIR
+    codex_skills = CODEX_SKILLS_DIR
+    claude_skills.mkdir(parents=True, exist_ok=True)
+    codex_skills.mkdir(parents=True, exist_ok=True)
+
+    installed: list[str] = []
+    skipped: list[str] = []
+
+    try:
+        with tarfile.open(fileobj=io.BytesIO(tarball_bytes), mode="r:gz") as tar:
+            # First pass: collect the top-level skill names from the tarball
+            skill_names_in_tar: dict[str, str] = {}  # name -> dir_tag
+            for member in tar.getmembers():
+                parts = member.name.split("/", 1)
+                if len(parts) < 2:
+                    continue
+                dir_tag, rest = parts[0], parts[1]
+                skill_name = rest.split("/")[0]
+                if not skill_name:
+                    continue
+                skill_names_in_tar[skill_name] = dir_tag
+
+            # Filter to only new skills
+            new_skills: set[str] = set()
+            for name, dir_tag in skill_names_in_tar.items():
+                if name not in existing:
+                    new_skills.add(name)
+                else:
+                    skipped.append(name)
+
+            if not new_skills:
+                return {
+                    "ok": True,
+                    "mode": "pull",
+                    "installed": [],
+                    "skipped": skipped,
+                    "summary": f"All {len(skipped)} remote skills already exist on hub — nothing to pull.",
+                }
+
+            # Second pass: extract only files belonging to new skills
+            # Re-open the tarball for a fresh read
+            tar.fileobj.seek(0)
+            for member in tar.getmembers():
+                parts = member.name.split("/", 1)
+                if len(parts) < 2:
+                    continue
+                dir_tag, rest = parts[0], parts[1]
+                skill_name = rest.split("/")[0]
+                if skill_name not in new_skills:
+                    continue
+
+                if dir_tag == "skills":
+                    target_dir = claude_skills
+                elif dir_tag == "skills.codex":
+                    target_dir = codex_skills
+                else:
+                    continue
+
+                if not rest:
+                    continue
+
+                member.name = rest
+                target_path = (target_dir / rest).resolve()
+                if not str(target_path).startswith(str(target_dir.resolve())):
+                    continue
+                tar.extract(member, path=str(target_dir), set_attrs=False)
+
+            installed = sorted(new_skills)
+    except Exception as e:
+        return {"ok": False, "error": f"Tarball extraction failed: {e}"}
+
+    return {
+        "ok": True,
+        "mode": "pull",
+        "installed": installed,
+        "skipped": skipped,
+        "summary": f"Pulled {len(installed)} new skill(s) from remote → hub ({', '.join(installed[:5])}{'...' if len(installed) > 5 else ''})" if installed else f"No new skills — {len(skipped)} already on hub.",
+    }
+
+
+def pull_skills_via_ssh(node_id: str) -> tuple[bytes, dict]:
+    """Download a skills tarball from a remote SSH node.
+
+    Returns (tarball_bytes, node_info).
+    """
+    cfg = load_config()
+    node = None
+    for n in cfg.nodes:
+        if n.id == node_id:
+            node = n
+            break
+    if node is None:
+        raise ValueError(f"unknown node: {node_id}")
+
+    password = ""
+    for entry in _load_raw_ssh_history():
+        if entry.get("id") == node_id:
+            password = str(entry.get("password") or "")
+            break
+
+    client = _ssh_connect(node, password)
+    try:
+        remote_tmp = "/tmp/lucid-skills-pull.tar.gz"
+        # Build tarball on remote and download it
+        _run(client, (
+            f"rm -f {remote_tmp} && "
+            f"cd $HOME && "
+            f"tar czf {remote_tmp} .claude/skills .codex/skills 2>/dev/null || true"
+        ))
+
+        buf = io.BytesIO()
+        with client.open_sftp() as sftp:
+            sftp.getfo(remote_tmp, buf)
+        _run(client, f"rm -f {remote_tmp}")
+
+        node_info = {
+            "id": node.id,
+            "name": node.name or node.id,
+            "host": node.host or node.ssh_host,
+            "user": node.user,
+        }
+        return buf.getvalue(), node_info
     finally:
         try:
             client.close()
