@@ -279,27 +279,23 @@ def build_skills_tarball_raw(names: list[dict] | None = None) -> bytes:
 
 
 def hub_skill_names() -> set[str]:
-    """Return the set of skill names already installed on the hub."""
+    """Return the set of skill names already installed on the hub (recursive)."""
     names: set[str] = set()
     for base in (SKILLS_DIR, CODEX_SKILLS_DIR):
         if not base.exists():
             continue
-        for d in base.iterdir():
+        for d in base.rglob("*"):
             if d.is_dir() and (d / "SKILL.md").exists():
                 names.add(d.name)
-            # Recurse one extra level for .system etc
-            if d.is_dir() and d.name.startswith("."):
-                for sd in d.iterdir():
-                    if sd.is_dir() and (sd / "SKILL.md").exists():
-                        names.add(sd.name)
     return names
 
 
 def install_skills_append_only(tarball_bytes: bytes) -> dict:
     """Extract a tarball to hub, skipping skills that already exist.
 
-    Only installs skill directories that are *not* already present on the hub
-    (checked by directory name + existence of SKILL.md).
+    Only installs skill directories that are *not* already present on the hub.
+    Skill names are derived from tarball paths that end with ``SKILL.md``
+    (so nested skills like ``skills/superpowers/foo/SKILL.md`` yield name ``foo``).
     """
     existing = hub_skill_names()
     if not tarball_bytes:
@@ -315,23 +311,24 @@ def install_skills_append_only(tarball_bytes: bytes) -> dict:
 
     try:
         with tarfile.open(fileobj=io.BytesIO(tarball_bytes), mode="r:gz") as tar:
-            # First pass: collect the top-level skill names from the tarball
-            skill_names_in_tar: dict[str, str] = {}  # name -> dir_tag
+            # First pass: find SKILL.md entries to determine skill names
+            skill_roots: dict[str, str] = {}  # skill_name -> member prefix to extract
             for member in tar.getmembers():
-                parts = member.name.split("/", 1)
-                if len(parts) < 2:
-                    continue
-                dir_tag, rest = parts[0], parts[1]
-                skill_name = rest.split("/")[0]
-                if not skill_name:
-                    continue
-                skill_names_in_tar[skill_name] = dir_tag
+                if member.name.endswith("/SKILL.md") or member.name.endswith("SKILL.md") and "/" in member.name:
+                    parts = member.name.rsplit("/", 2)
+                    # parts: ["skills", "...prefix.../skill_name", "SKILL.md"]
+                    if len(parts) >= 2:
+                        skill_name = parts[-2]  # the directory containing SKILL.md
+                        # The prefix to match files belonging to this skill
+                        prefix = "/".join(parts[:-1]) + "/"
+                        if skill_name not in skill_roots:
+                            skill_roots[skill_name] = prefix
 
-            # Filter to only new skills
-            new_skills: set[str] = set()
-            for name, dir_tag in skill_names_in_tar.items():
+            # Dedup
+            new_skills: dict[str, str] = {}
+            for name, prefix in skill_roots.items():
                 if name not in existing:
-                    new_skills.add(name)
+                    new_skills[name] = prefix
                 else:
                     skipped.append(name)
 
@@ -344,18 +341,27 @@ def install_skills_append_only(tarball_bytes: bytes) -> dict:
                     "summary": f"All {len(skipped)} remote skills already exist on hub — nothing to pull.",
                 }
 
-            # Second pass: extract only files belonging to new skills
-            # Re-open the tarball for a fresh read
-            tar.fileobj.seek(0)
+            # Second pass: extract files belonging to new skills
+            seen: set[str] = set()
             for member in tar.getmembers():
-                parts = member.name.split("/", 1)
-                if len(parts) < 2:
+                if member.name in seen:
                     continue
-                dir_tag, rest = parts[0], parts[1]
-                skill_name = rest.split("/")[0]
-                if skill_name not in new_skills:
+                seen.add(member.name)
+
+                # Check if this entry belongs to any new skill
+                matched_name = None
+                matched_prefix = None
+                for name, prefix in new_skills.items():
+                    if member.name.startswith(prefix):
+                        matched_name = name
+                        matched_prefix = prefix
+                        break
+                if matched_name is None:
                     continue
 
+                # Determine target directory from the first path segment
+                parts = member.name.split("/", 1)
+                dir_tag = parts[0]
                 if dir_tag == "skills":
                     target_dir = claude_skills
                 elif dir_tag == "skills.codex":
@@ -363,16 +369,18 @@ def install_skills_append_only(tarball_bytes: bytes) -> dict:
                 else:
                     continue
 
-                if not rest:
-                    continue
-
+                # Rewrite member name to strip the dir_tag and skill prefix
+                # Original: "skills/superpowers/foo/SKILL.md"
+                # After strip: "superpowers/foo/SKILL.md" (relative to claude_skills)
+                rest = member.name[len(dir_tag) + 1:]  # strip "skills/"
                 member.name = rest
+
                 target_path = (target_dir / rest).resolve()
                 if not str(target_path).startswith(str(target_dir.resolve())):
                     continue
                 tar.extract(member, path=str(target_dir), set_attrs=False)
 
-            installed = sorted(new_skills)
+            installed = sorted(new_skills.keys())
     except Exception as e:
         return {"ok": False, "error": f"Tarball extraction failed: {e}"}
 
@@ -381,7 +389,12 @@ def install_skills_append_only(tarball_bytes: bytes) -> dict:
         "mode": "pull",
         "installed": installed,
         "skipped": skipped,
-        "summary": f"Pulled {len(installed)} new skill(s) from remote → hub ({', '.join(installed[:5])}{'...' if len(installed) > 5 else ''})" if installed else f"No new skills — {len(skipped)} already on hub.",
+        "summary": (
+            f"Pulled {len(installed)} new skill(s) from remote → hub "
+            f"({', '.join(installed[:5])}{'...' if len(installed) > 5 else ''})"
+            if installed else
+            f"No new skills — {len(skipped)} already on hub."
+        ),
     }
 
 

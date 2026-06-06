@@ -2569,12 +2569,15 @@ def api_node_skills_pull(node_id: str) -> dict:
                 "summary": "Local node — skills are already on the hub filesystem."}
 
     # Try via agent API first
+    tarball_bytes = None
+    last_error = ""
     try:
-        resp = nodes._http_raw(node, "GET", "/agent/v1/skills/raw", timeout_ms=15000)
-        tarball_bytes = resp[0]
+        tarball_bytes, _ = nodes.http_raw(node, "GET", "/agent/v1/skills/raw", timeout_ms=15000)
+    except Exception as e:
+        last_error = f"agent API: {e}"
+
+    if tarball_bytes:
         return install_skills_append_only(tarball_bytes)
-    except Exception:
-        pass
 
     # Fallback: direct SSH
     try:
@@ -2582,7 +2585,10 @@ def api_node_skills_pull(node_id: str) -> dict:
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(502, f"SSH pull failed: {e}")
+        raise HTTPException(502, f"SSH pull failed: {e}" + (f" (also tried agent API: {last_error})" if last_error else ""))
+
+    if not tarball_bytes:
+        raise HTTPException(502, "Failed to retrieve skills from remote node" + (f": {last_error}" if last_error else ""))
 
     return install_skills_append_only(tarball_bytes)
 

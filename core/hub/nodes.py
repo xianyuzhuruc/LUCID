@@ -497,7 +497,7 @@ def _is_loopback_url(url: str) -> bool:
     return host == "localhost" or host == "::1" or host.startswith("127.")
 
 
-def _http_raw(node: NodeConfig, method: str, path: str, timeout_ms: int = 5000) -> tuple[bytes, str]:
+def http_raw(node: NodeConfig, method: str, path: str, timeout_ms: int = 5000) -> tuple[bytes, str]:
     """Return (body_bytes, content_type) from a remote agent."""
     url = node.base_url + path
     headers = {}

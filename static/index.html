@@ -488,10 +488,6 @@
         <span x-show="loadingSkills" class="text-xs text-gray-400">Loading...</span>
         <button @click="refreshSkills()" class="text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-3 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600">
           Refresh</button>
-        <select x-model="skillUploadOrigin" class="text-xs border dark:border-gray-600 rounded px-1.5 py-1 dark:bg-gray-700 dark:text-gray-200">
-          <option value="claude">claude</option>
-          <option value="codex">codex</option>
-        </select>
         <button @click="$refs.skillUploadInput?.click()"
                 :disabled="uploadingSkill"
                 class="text-xs border border-blue-200 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-3 py-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40"
@@ -1580,7 +1576,6 @@ function superCliTerminal() {
     loadingSkills: false,
     skillSyncBusy: {},
     skillSyncResults: {},
-    skillUploadOrigin: 'claude',
     uploadingSkill: false,
     skillSearch: '',
     skillExpanded: '',
@@ -3746,7 +3741,7 @@ function superCliTerminal() {
           fileList.push({ path: innerPath, content_b64: b64 });
         }
 
-        const origin = this.skillUploadOrigin || 'claude';
+        const origin = 'claude';
         const r = await fetch('/api/skills/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
