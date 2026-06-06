@@ -3662,8 +3662,7 @@ function superCliTerminal() {
       const nodeId = node.id;
       const selected = this.skillSelection.length > 0 ? this.skillSelection : null;
       this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: true };
-      this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: null };
-      this.toast(`Syncing skills to ${node.name || nodeId} (${mode})...`, 3000);
+      this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: { ok: null, summary: 'Syncing...' } };
       try {
         const r = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/skills/sync`, {
           method: 'POST',
@@ -3674,13 +3673,13 @@ function superCliTerminal() {
         this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: d };
         if (d.ok) {
           const label = selected && selected.length ? `${selected.length} skill(s)` : 'all skills';
-          this.toast(`${mode === 'replace' ? 'Replaced' : 'Appended'} ${label} on ${node.name || nodeId}`);
+          this.toast(`${mode === 'replace' ? 'Replaced' : 'Appended'} ${label} on ${node.name || nodeId}`, 6000);
         } else {
-          this.toast(`Sync failed: ${d.error || 'unknown error'}`);
+          this.toast(`Sync failed: ${d.error || 'unknown error'}`, 6000);
         }
       } catch (e) {
         this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: { ok: false, error: String(e.message || e) } };
-        this.toast('Sync failed: ' + String(e.message || e));
+        this.toast('Sync failed: ' + String(e.message || e), 6000);
       } finally {
         this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: false };
       }
@@ -3689,8 +3688,7 @@ function superCliTerminal() {
     async pullSkillsFromNode(node) {
       const nodeId = node.id;
       this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: true };
-      this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: null };
-      this.toast(`Pulling skills from ${node.name || nodeId}...`, 3000);
+      this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: { ok: null, summary: 'Pulling...' } };
       try {
         const r = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/skills/pull`, {
           method: 'POST',
@@ -3701,13 +3699,13 @@ function superCliTerminal() {
           if (d.installed && d.installed.length) {
             await this.refreshSkills();
           }
-          this.toast(d.summary || `Pulled skills from ${node.name || nodeId}`);
+          this.toast(d.summary || `Pulled skills from ${node.name || nodeId}`, 6000);
         } else {
-          this.toast(`Pull failed: ${d.error || 'unknown error'}`);
+          this.toast(`Pull failed: ${d.error || 'unknown error'}`, 6000);
         }
       } catch (e) {
         this.skillSyncResults = { ...this.skillSyncResults, [nodeId]: { ok: false, error: String(e.message || e) } };
-        this.toast('Pull failed: ' + String(e.message || e));
+        this.toast('Pull failed: ' + String(e.message || e), 6000);
       } finally {
         this.skillSyncBusy = { ...this.skillSyncBusy, [nodeId]: false };
       }
