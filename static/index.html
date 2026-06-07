@@ -20,7 +20,7 @@
   .triage-bash { background-color: #64748b; }
   .triage-completed { background-color: #3b82f6; }
   pre { white-space: pre-wrap; word-break: break-all; }
-  .terminal-frame { min-height: 30rem; height: 100%; background: #020617; }
+  .terminal-frame { min-height: 30rem; height: 100%; background: #020617; overscroll-behavior: contain; touch-action: none; }
   .terminal-frame .xterm { height: 100%; padding: 10px; }
   .terminal-frame .xterm-screen { height: 100%; }
   .terminal-frame .xterm-viewport { background-color: #020617 !important; }
@@ -1610,7 +1610,12 @@ function superCliTerminal() {
     terminalCopyHandler: null,
     terminalPasteHandler: null,
     terminalWheelHandler: null,
+    terminalTouchStartHandler: null,
+    terminalTouchMoveHandler: null,
+    terminalTouchEndHandler: null,
     terminalWheelRemainder: 0,
+    terminalTouchActive: false,
+    terminalTouchLastY: 0,
     terminalLastPasteData: '',
     terminalLastPasteAt: 0,
     terminalDropActive: false,
@@ -2783,7 +2788,22 @@ function superCliTerminal() {
         this.$refs.terminalOutput.removeEventListener('wheel', this.terminalWheelHandler, true);
       }
       this.terminalWheelHandler = null;
+      if (this.terminalTouchStartHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('touchstart', this.terminalTouchStartHandler, true);
+      }
+      if (this.terminalTouchMoveHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('touchmove', this.terminalTouchMoveHandler, true);
+      }
+      if (this.terminalTouchEndHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('touchend', this.terminalTouchEndHandler, true);
+        this.$refs.terminalOutput.removeEventListener('touchcancel', this.terminalTouchEndHandler, true);
+      }
+      this.terminalTouchStartHandler = null;
+      this.terminalTouchMoveHandler = null;
+      this.terminalTouchEndHandler = null;
       this.terminalWheelRemainder = 0;
+      this.terminalTouchActive = false;
+      this.terminalTouchLastY = 0;
       this.terminalLastPasteData = '';
       this.terminalLastPasteAt = 0;
       if (this.terminal) this.terminal.dispose();
@@ -2998,6 +3018,13 @@ function superCliTerminal() {
         this.sendTerminalScroll(event);
       };
       el.addEventListener('wheel', this.terminalWheelHandler, { capture: true, passive: false });
+      this.terminalTouchStartHandler = (event) => this.startTerminalTouchScroll(event);
+      this.terminalTouchMoveHandler = (event) => this.moveTerminalTouchScroll(event);
+      this.terminalTouchEndHandler = () => this.endTerminalTouchScroll();
+      el.addEventListener('touchstart', this.terminalTouchStartHandler, { capture: true, passive: false });
+      el.addEventListener('touchmove', this.terminalTouchMoveHandler, { capture: true, passive: false });
+      el.addEventListener('touchend', this.terminalTouchEndHandler, true);
+      el.addEventListener('touchcancel', this.terminalTouchEndHandler, true);
       this.terminalResizeObserver = new ResizeObserver(() => {
         this.fitTerminal();
         this.sendTerminalResize();
@@ -3040,17 +3067,50 @@ function superCliTerminal() {
       if (!event || !this.terminalSocket || this.terminalSocket.readyState !== WebSocket.OPEN) return;
       const delta = event.deltaY || event.deltaX || 0;
       if (!delta) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const lineHeight = this.terminal?._core?._renderService?.dimensions?.css?.cell?.height || 15;
       const lineDeltaMode = typeof WheelEvent !== 'undefined' ? WheelEvent.DOM_DELTA_LINE : 1;
-      const unit = event.deltaMode === lineDeltaMode ? 1 : lineHeight;
-      this.terminalWheelRemainder += delta / Math.max(1, unit);
+      const unit = event.deltaMode === lineDeltaMode ? 1 : this.terminalLineHeight();
+      this.sendTerminalScrollDelta(delta, unit, event);
+    },
+
+    terminalLineHeight() {
+      return this.terminal?._core?._renderService?.dimensions?.css?.cell?.height || 15;
+    },
+
+    sendTerminalScrollDelta(delta, unit, event = null) {
+      if (!this.terminalSocket || this.terminalSocket.readyState !== WebSocket.OPEN || !delta) return false;
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      this.terminalWheelRemainder += delta / Math.max(1, unit || this.terminalLineHeight());
       const direction = this.terminalWheelRemainder > 0 ? 'down' : 'up';
       const lines = Math.min(200, Math.floor(Math.abs(this.terminalWheelRemainder)));
-      if (!lines) return;
+      if (!lines) return true;
       this.terminalWheelRemainder += direction === 'down' ? -lines : lines;
       this.terminalSocket.send(JSON.stringify({ type: 'scroll', direction, lines }));
+      return true;
+    },
+
+    startTerminalTouchScroll(event) {
+      if (!event?.touches || event.touches.length !== 1) return;
+      this.terminalTouchActive = true;
+      this.terminalTouchLastY = event.touches[0].clientY;
+    },
+
+    moveTerminalTouchScroll(event) {
+      if (!this.terminalTouchActive || !event?.touches || event.touches.length !== 1) {
+        this.endTerminalTouchScroll();
+        return;
+      }
+      const y = event.touches[0].clientY;
+      const delta = this.terminalTouchLastY - y;
+      this.terminalTouchLastY = y;
+      this.sendTerminalScrollDelta(delta, this.terminalLineHeight(), event);
+    },
+
+    endTerminalTouchScroll() {
+      this.terminalTouchActive = false;
+      this.terminalTouchLastY = 0;
     },
 
     normalizeTerminalPasteData(data) {

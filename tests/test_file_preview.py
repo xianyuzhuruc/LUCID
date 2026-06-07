@@ -65,6 +65,16 @@ class FilePreviewTest(unittest.TestCase):
         self.assertIn("clearTerminalEditorCache(key)", html)
         self.assertIn("closeTerminal({ discardCache: true });", html)
 
+    def test_frontend_supports_touch_scrolling_terminal(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("touch-action: none", html)
+        self.assertIn("terminalTouchStartHandler", html)
+        self.assertIn("touchmove", html)
+        self.assertIn("startTerminalTouchScroll(event)", html)
+        self.assertIn("moveTerminalTouchScroll(event)", html)
+        self.assertIn("sendTerminalScrollDelta(delta", html)
+
 
 if __name__ == "__main__":
     unittest.main()
