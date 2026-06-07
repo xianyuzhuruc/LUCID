@@ -11,7 +11,7 @@ __pycache__/
 .agent/
 .codex/
 deployment_package
-test
+tests/
 
 # generated demo data + public mirror clone
 fixtures/demo-home/
