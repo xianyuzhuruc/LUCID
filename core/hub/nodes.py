@@ -840,7 +840,7 @@ def forward_raw(node_id: str, method: str, path: str) -> tuple[bytes, str]:
         raise ValueError(f"unknown node {node_id}")
     if node.kind == "local":
         raise ValueError("raw forwarding is not supported for local nodes")
-    return _http_raw(node, method, path, timeout_ms=10000)
+    return http_raw(node, method, path, timeout_ms=10000)
 
 
 def write_node_config(node: NodeConfig) -> None:

@@ -1017,6 +1017,10 @@
                       :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
                       class="rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
                       x-text="editor.deleting ? 'Deleting...' : 'Delete'"></button>
+              <button @click="openRawEditorFile()"
+                      x-show="editor.type === 'image' || editor.type === 'pdf'"
+                      :disabled="!editor.rawUrl"
+                      class="rounded border border-slate-200 bg-white dark:bg-gray-700 px-2 py-1 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-gray-600 disabled:opacity-40">Open</button>
               <button @click="saveEditorFile()"
                       x-show="editor.type !== 'image' && editor.type !== 'pdf'"
                       :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
@@ -1726,7 +1730,8 @@ function superCliTerminal() {
     },
 
     get skillNodes() {
-      return this.nodes.filter(n => n.kind === 'ssh' || this.isLocalNode(n));
+      // All syncable nodes: remote SSH + local agent
+      return this.nodes.filter(n => n.kind === 'ssh' || n.kind === 'agent');
     },
 
     get filteredHubSkills() {
@@ -2379,6 +2384,8 @@ function superCliTerminal() {
         this.activeEditorTab = -1;
         // Clear editor display but stay on editor panel
         this.editor.path = '';
+        this.editor.type = 'text';
+        this.editor.rawUrl = '';
         this.editor.content = '';
         this.editor.originalContent = '';
         this.editor.dirty = false;
@@ -2449,11 +2456,15 @@ function superCliTerminal() {
         });
         this.activeEditorTab = newIdx;
         this.editor.path = filePath;
+        this.editor.type = isImage ? 'image' : 'pdf';
+        this.editor.rawUrl = rawUrl;
         this.editor.content = '';
         this.editor.originalContent = '';
         this.editor.dirty = false;
         this.editor.loading = false;
         this.editor.error = '';
+        const codeEl = this.$refs.editorHighlight;
+        if (codeEl) codeEl.innerHTML = '';
         return;
       }
 
@@ -2480,6 +2491,8 @@ function superCliTerminal() {
         });
         this.activeEditorTab = newIdx;
         this.editor.path = filePath;
+        this.editor.type = 'text';
+        this.editor.rawUrl = '';
         this.editor.content = content;
         this.editor.originalContent = content;
         this.editor.dirty = false;
@@ -2525,6 +2538,11 @@ function superCliTerminal() {
       if (key !== 's' || (!event.ctrlKey && !event.metaKey)) return;
       event.preventDefault();
       this.saveEditorFile();
+    },
+
+    openRawEditorFile() {
+      if (!this.editor.rawUrl) return;
+      window.open(this.editor.rawUrl, '_blank', 'noopener');
     },
 
     async saveEditorFile() {
@@ -4070,6 +4088,5 @@ function superCliTerminal() {
 }
 function showAlert(msg) { console.log('[LUCID DEBUG]', msg); }
 </script>
-<div id="version-badge" style="position:fixed;bottom:4px;right:4px;font-size:10px;color:#999;z-index:9999">v250606b</div>
 </body>
 </html>

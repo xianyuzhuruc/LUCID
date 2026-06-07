@@ -206,6 +206,10 @@ def _is_local_enabled_node(node: nodes.NodeConfig) -> bool:
     return node.id == "local" and node.kind in {"local", "agent"}
 
 
+def _uses_hub_filesystem(node: nodes.NodeConfig) -> bool:
+    return node.kind == "local" or _is_local_enabled_node(node)
+
+
 def _configured_node(node_id: str) -> nodes.NodeConfig:
     node = nodes.node_by_id(node_id)
     if not node:
@@ -491,6 +495,24 @@ def _guess_mime(path: str) -> str:
         return MIME_MAP[suffix]
     guessed, _ = mimetypes.guess_type(path)
     return guessed or "application/octet-stream"
+
+
+def _ascii_header_filename(name: str) -> str:
+    safe = []
+    for ch in name:
+        code = ord(ch)
+        safe.append(ch if 32 <= code < 127 and ch not in {'"', "\\", ";"} else "_")
+    return "".join(safe).strip() or "file"
+
+
+def _inline_file_headers(raw_path: str) -> dict[str, str]:
+    name = Path(raw_path).name or "file"
+    fallback = _ascii_header_filename(name)
+    quoted = urllib.parse.quote(name)
+    return {
+        "Content-Disposition": f"inline; filename=\"{fallback}\"; filename*=UTF-8''{quoted}",
+        "X-Content-Type-Options": "nosniff",
+    }
 
 
 def _local_file_raw(raw_path: str) -> tuple[bytes, str]:
@@ -1366,7 +1388,7 @@ def api_node_path_create(node_id: str, payload: dict = Body(...)) -> dict:
 @app.get("/api/nodes/{node_id}/files")
 def api_node_file_read(node_id: str, path: str = "") -> dict:
     node = _configured_node(node_id)
-    if node.kind == "local":
+    if _uses_hub_filesystem(node):
         return _local_file_read(path)
     query = urllib.parse.urlencode({"path": path})
     return nodes.forward(node_id, "GET", f"/agent/v1/files?{query}")
@@ -1375,10 +1397,9 @@ def api_node_file_read(node_id: str, path: str = "") -> dict:
 @app.get("/api/nodes/{node_id}/files/raw")
 def api_node_file_raw(node_id: str, path: str = ""):
     node = _configured_node(node_id)
-    if node.kind == "local":
+    if _uses_hub_filesystem(node):
         content, mime = _local_file_raw(path)
-        return Response(content=content, media_type=mime,
-                        headers={"Content-Disposition": "inline"})
+        return Response(content=content, media_type=mime, headers=_inline_file_headers(path))
     # For remote nodes, proxy the raw response
     query = urllib.parse.urlencode({"path": path})
     try:
@@ -1387,8 +1408,7 @@ def api_node_file_raw(node_id: str, path: str = ""):
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(502, str(e))
-    return Response(content=raw, media_type=mime,
-                    headers={"Content-Disposition": "inline"})
+    return Response(content=raw, media_type=mime, headers=_inline_file_headers(path))
 
 
 @app.post("/api/nodes/{node_id}/files")
@@ -1950,8 +1970,7 @@ def agent_file_read(path: str = "", authorization: str | None = Header(None)) ->
 def agent_file_raw(path: str = "", authorization: str | None = Header(None)) -> Response:
     _require_agent_auth(authorization)
     content, mime = _local_file_raw(path)
-    return Response(content=content, media_type=mime,
-                    headers={"Content-Disposition": "inline"})
+    return Response(content=content, media_type=mime, headers=_inline_file_headers(path))
 
 
 @app.post("/agent/v1/files")
