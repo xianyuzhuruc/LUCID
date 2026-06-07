@@ -1055,14 +1055,14 @@
                         linear-gradient(45deg, #e5e5e5 25%, transparent 25%, transparent 75%, #e5e5e5 75%, #e5e5e5);
                         background-size: 20px 20px;
                         background-position: 0 0, 10px 10px;">
-              <img :src="editor.rawUrl" class="max-w-full max-h-full object-contain shadow-lg rounded"
+              <img :src="editor.type === 'image' ? editor.rawUrl : ''" class="max-w-full max-h-full object-contain shadow-lg rounded"
                    alt="image preview"
                    @error="editor.error = 'Failed to load image'">
             </div>
 
             <!-- PDF viewer -->
             <div x-show="editor.type === 'pdf'" class="flex-1 min-h-0">
-              <iframe :src="editor.rawUrl" class="w-full h-full border-0"
+              <iframe :src="editor.type === 'pdf' ? editor.rawUrl : ''" class="w-full h-full border-0"
                       @error="editor.error = 'Failed to load PDF'"></iframe>
             </div>
         </div>
@@ -1615,6 +1615,7 @@ function superCliTerminal() {
     terminalLastPasteAt: 0,
     terminalDropActive: false,
     terminalPanelTab: 'terminal',
+    terminalEditorCache: {},
     terminalExplorer: {
       loading: false,
       uploading: false,
@@ -2045,12 +2046,15 @@ function superCliTerminal() {
     },
 
     async openTerminal(w) {
+      this.saveCurrentTerminalEditorCache();
       this.closeTerminalSession();
       this.terminalWindow = w;
       if (this.terminalZoom) this.zoomStartedAt = Date.now();
-      this.terminalPanelTab = 'terminal';
       this.terminalSidebarOpen = true;
-      this.resetEditor();
+      if (!this.restoreTerminalEditorCache(w)) {
+        this.terminalPanelTab = 'terminal';
+        this.resetEditor();
+      }
       this.terminalExplorer = {
         loading: false,
         uploading: false,
@@ -2404,10 +2408,8 @@ function superCliTerminal() {
       }
     },
 
-    resetEditor() {
-      if (this._highlightTimeout) clearTimeout(this._highlightTimeout);
-      this._highlightTimeout = null;
-      this.editor = {
+    blankEditorState(overrides = {}) {
+      return {
         path: '',
         type: 'text',
         rawUrl: '',
@@ -2418,7 +2420,93 @@ function superCliTerminal() {
         deleting: false,
         dirty: false,
         error: '',
+        ...overrides,
       };
+    },
+
+    sanitizeEditorState(state = {}) {
+      return this.blankEditorState({
+        path: state.path || '',
+        type: state.type || 'text',
+        rawUrl: state.rawUrl || '',
+        content: state.content || '',
+        originalContent: state.originalContent || '',
+        dirty: !!state.dirty,
+      });
+    },
+
+    sanitizeEditorTab(tab = {}) {
+      return {
+        path: tab.path || '',
+        type: tab.type || 'text',
+        rawUrl: tab.rawUrl || '',
+        content: tab.content || '',
+        originalContent: tab.originalContent || '',
+        dirty: !!tab.dirty,
+      };
+    },
+
+    saveCurrentTerminalEditorCache() {
+      if (!this.terminalWindow) return;
+      const key = this.windowKey(this.terminalWindow);
+      if (!key) return;
+      this._saveActiveTab();
+      const editorTabs = this.editorTabs
+        .map(tab => this.sanitizeEditorTab(tab))
+        .filter(tab => tab.path);
+      const activeEditorTab = this.activeEditorTab >= 0 && this.activeEditorTab < editorTabs.length
+        ? this.activeEditorTab
+        : -1;
+      this.terminalEditorCache = {
+        ...this.terminalEditorCache,
+        [key]: {
+          terminalPanelTab: this.terminalPanelTab === 'editor' ? 'editor' : 'terminal',
+          editor: this.sanitizeEditorState(this.editor),
+          editorTabs,
+          activeEditorTab,
+        },
+      };
+    },
+
+    restoreTerminalEditorCache(w) {
+      const key = this.windowKey(w);
+      const cached = key ? this.terminalEditorCache[key] : null;
+      if (!cached) return false;
+      this.editorTabs = (cached.editorTabs || [])
+        .map(tab => this.sanitizeEditorTab(tab))
+        .filter(tab => tab.path);
+      let active = Number.isInteger(cached.activeEditorTab) ? cached.activeEditorTab : -1;
+      if (active < 0 || active >= this.editorTabs.length) {
+        active = this.editorTabs.length ? 0 : -1;
+      }
+      this.activeEditorTab = active;
+      if (active >= 0) {
+        this.editor = this.sanitizeEditorState(this.editorTabs[active]);
+      } else {
+        this.editor = this.sanitizeEditorState(cached.editor || {});
+      }
+      this.terminalPanelTab = cached.terminalPanelTab === 'editor' ? 'editor' : 'terminal';
+      if (this.editor.type === 'image' || this.editor.type === 'pdf') {
+        const codeEl = this.$refs.editorHighlight;
+        if (codeEl) codeEl.innerHTML = '';
+      } else {
+        this.$nextTick(() => this.syncEditorHighlight());
+      }
+      return true;
+    },
+
+    clearTerminalEditorCache(wOrKey) {
+      const key = typeof wOrKey === 'string' ? wOrKey : this.windowKey(wOrKey);
+      if (!key || !this.terminalEditorCache[key]) return;
+      const next = { ...this.terminalEditorCache };
+      delete next[key];
+      this.terminalEditorCache = next;
+    },
+
+    resetEditor() {
+      if (this._highlightTimeout) clearTimeout(this._highlightTimeout);
+      this._highlightTimeout = null;
+      this.editor = this.blankEditorState();
       this.editorTabs = [];
       this.activeEditorTab = -1;
       const codeEl = this.$refs.editorHighlight;
@@ -2681,7 +2769,12 @@ function superCliTerminal() {
       this.terminalFitAddon = null;
     },
 
-    closeTerminal() {
+    closeTerminal(options = {}) {
+      if (options.discardCache && this.terminalWindow) {
+        this.clearTerminalEditorCache(this.terminalWindow);
+      } else {
+        this.saveCurrentTerminalEditorCache();
+      }
       this.closeTerminalSession();
       this.terminalWindow = null;
       this.terminalZoom = false;
@@ -3095,14 +3188,16 @@ function superCliTerminal() {
     },
 
     async closeWindow(w) {
+      const key = this.windowKey(w);
       const r = await fetch(this.nodeWindowUrl(w, 'close'), { method: 'POST' });
       const d = await r.json();
       this.toast(d.ok ? 'Closed ' + (d.name || w.pid) : 'Failed: ' + (d.error || ''));
       if (d.ok) {
+        this.clearTerminalEditorCache(key);
         const s = await fetch('/api/windows').then(r => r.json());
         this.applySnapshot(s);
         if (this.terminalWindow && this.windowKey(this.terminalWindow) === this.windowKey(w)) {
-          this.closeTerminal();
+          this.closeTerminal({ discardCache: true });
         }
       }
       return d;

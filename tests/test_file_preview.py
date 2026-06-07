@@ -42,8 +42,19 @@ class FilePreviewTest(unittest.TestCase):
 
         self.assertIn("this.editor.type = isImage ? 'image' : 'pdf';", html)
         self.assertIn("this.editor.rawUrl = rawUrl;", html)
+        self.assertIn("editor.type === 'image' ? editor.rawUrl : ''", html)
+        self.assertIn("editor.type === 'pdf' ? editor.rawUrl : ''", html)
         self.assertIn("openRawEditorFile()", html)
         self.assertIn("window.open(this.editor.rawUrl, '_blank', 'noopener');", html)
+
+    def test_frontend_caches_editor_state_per_terminal(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("terminalEditorCache: {}", html)
+        self.assertIn("saveCurrentTerminalEditorCache();", html)
+        self.assertIn("restoreTerminalEditorCache(w)", html)
+        self.assertIn("clearTerminalEditorCache(key)", html)
+        self.assertIn("closeTerminal({ discardCache: true });", html)
 
 
 if __name__ == "__main__":
