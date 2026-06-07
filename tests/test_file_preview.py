@@ -47,6 +47,15 @@ class FilePreviewTest(unittest.TestCase):
         self.assertIn("openRawEditorFile()", html)
         self.assertIn("window.open(this.editor.rawUrl, '_blank', 'noopener');", html)
 
+    def test_frontend_marks_previewable_file_badges(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("pdf: 'PDF'", html)
+        self.assertIn("pdf: 'bg-red-50 text-red-700'", html)
+        self.assertIn("png: 'IMG'", html)
+        self.assertIn("gif: 'GIF'", html)
+        self.assertIn("svg: 'SVG'", html)
+
     def test_frontend_caches_editor_state_per_terminal(self) -> None:
         html = Path("static/index.html").read_text(encoding="utf-8")
 
