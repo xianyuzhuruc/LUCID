@@ -2995,33 +2995,42 @@ function superCliTerminal() {
         if (event.type !== 'keydown') return true;
         const key = (event.key || '').toLowerCase();
         const ctrlOrMeta = event.ctrlKey || event.metaKey;
+
+        // Paste: Ctrl+V / Shift+Insert — let the native paste event + our
+        // paste handler take care of it; just focus the terminal first.
         const pasteShortcut = (ctrlOrMeta && key === 'v') || (event.shiftKey && key === 'insert');
         if (pasteShortcut) {
           this.terminal?.focus();
           return false;
         }
-        // Only intercept Ctrl+C (without Shift) when there is a selection.
+
+        // Copy: Ctrl+C (without Shift) when xterm has a selection.
         // Ctrl+Shift+C passes through so xterm.js handles it natively.
-        const isCopyShortcut = ctrlOrMeta && key === 'c' && !event.shiftKey;
-        if (isCopyShortcut && term.hasSelection()) {
-          // Use execCommand('copy') to trigger a trusted browser copy event.
-          // Our terminalCopyHandler (registered on the native 'copy' event)
-          // catches it and transfers xterm.js selection → clipboard via
-          // event.clipboardData.setData, which is the most reliable method
-          // across browsers.  Async Clipboard API writeText can fail silently
-          // when the user-gesture window expires or permissions are restricted.
-          try {
-            document.execCommand('copy');
-          } catch (_) {}
-          // If execCommand didn't activate our copy handler (e.g. it failed
-          // or the browser suppressed it), fall back to the async API.
-          if (term.hasSelection()) {
-            this.copyTerminalSelection();
+        if (ctrlOrMeta && key === 'c' && !event.shiftKey && term.hasSelection()) {
+          const text = term.getSelection();
+          // Write to clipboard via the platform-native Clipboard API,
+          // falling back to the textarea+execCommand trick when the API
+          // is unavailable or restricted (e.g. non-secure context).
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+              this.clearTerminalSelection();
+            }).catch(() => {
+              this._copyTextFallback(text);
+              this.clearTerminalSelection();
+            });
+          } else {
+            this._copyTextFallback(text);
+            this.clearTerminalSelection();
           }
           return false;
         }
         return true;
       });
+
+      // Native 'copy' event handler — catches right-click → Copy and
+      // Ctrl+Shift+C (browser-native copy gesture).  xterm.js selection
+      // is canvas-based so there is no DOM selection; we grab it from
+      // the xterm API and stuff it into the clipboard event ourselves.
       this.terminalCopyHandler = (event) => {
         const text = this.terminal?.getSelection() || '';
         if (!text) return;
@@ -3030,12 +3039,15 @@ function superCliTerminal() {
         if (event.clipboardData) {
           event.clipboardData.setData('text/plain', text);
           this.clearTerminalSelection();
-          this.toast('Copied to clipboard');
         } else {
-          this.copyTerminalSelection();
+          this._copyTextFallback(text);
+          this.clearTerminalSelection();
         }
       };
       el.addEventListener('copy', this.terminalCopyHandler, true);
+
+      // Native 'paste' event handler — Ctrl+V triggers the browser paste
+      // event; we read clipboard and forward to the PTY via WebSocket.
       this.terminalPasteHandler = (event) => {
         const text = event.clipboardData?.getData('text/plain') || '';
         if (!text) return;
@@ -3045,10 +3057,20 @@ function superCliTerminal() {
         this.terminal?.focus();
       };
       el.addEventListener('paste', this.terminalPasteHandler, true);
+
+      // Scroll: wheel → WebSocket scroll command so the backend can
+      // access tmux copy-mode history.  Works identically for local
+      // (_scroll_tmux_history) and remote (proxied to agent).
       this.terminalWheelHandler = (event) => {
-        this.sendTerminalScroll(event);
+        const delta = event.deltaY || event.deltaX || 0;
+        if (!delta) return;
+        const lineDeltaMode = typeof WheelEvent !== 'undefined' ? WheelEvent.DOM_DELTA_LINE : 1;
+        const unit = event.deltaMode === lineDeltaMode ? 1 : this.terminalLineHeight();
+        this.sendTerminalScrollDelta(delta, unit, event);
       };
       el.addEventListener('wheel', this.terminalWheelHandler, { capture: true, passive: false });
+
+      // Touch scroll — same WebSocket-based approach.
       this.terminalTouchStartHandler = (event) => this.startTerminalTouchScroll(event);
       this.terminalTouchMoveHandler = (event) => this.moveTerminalTouchScroll(event);
       this.terminalTouchEndHandler = () => this.endTerminalTouchScroll();
@@ -3056,6 +3078,7 @@ function superCliTerminal() {
       el.addEventListener('touchmove', this.terminalTouchMoveHandler, { capture: true, passive: false });
       el.addEventListener('touchend', this.terminalTouchEndHandler, true);
       el.addEventListener('touchcancel', this.terminalTouchEndHandler, true);
+
       this.terminalResizeObserver = new ResizeObserver(() => {
         this.fitTerminal();
         this.sendTerminalResize();
@@ -3113,33 +3136,21 @@ function superCliTerminal() {
       }
     },
 
+    // ---- unified scroll helpers (wheel / touch → WebSocket → tmux copy-mode) ----
+
+    // sendTerminalScroll kept for backward compat with any leftover callers;
+    // delegates to the WebSocket path so local and remote terminals work identically.
     sendTerminalScroll(event) {
       if (!event) return;
       const delta = event.deltaY || event.deltaX || 0;
       if (!delta) return;
       const lineDeltaMode = typeof WheelEvent !== 'undefined' ? WheelEvent.DOM_DELTA_LINE : 1;
       const unit = event.deltaMode === lineDeltaMode ? 1 : this.terminalLineHeight();
-      this.scrollTerminalBuffer(delta, unit, event);
+      this.sendTerminalScrollDelta(delta, unit, event);
     },
 
     terminalLineHeight() {
       return this.terminal?._core?._renderService?.dimensions?.css?.cell?.height || 15;
-    },
-
-    scrollTerminalBuffer(delta, unit, event = null) {
-      const term = this.terminal;
-      const buffer = term?.buffer?.active;
-      if (!term || !buffer || !delta) return false;
-      const direction = delta > 0 ? 'down' : 'up';
-      if (direction === 'up' && buffer.viewportY <= 0) return false;
-      if (direction === 'down' && buffer.viewportY >= buffer.baseY) return false;
-      if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-      const lines = Math.max(1, Math.min(200, Math.floor(Math.abs(delta) / Math.max(1, unit || this.terminalLineHeight()))));
-      term.scrollLines(direction === 'down' ? lines : -lines);
-      return true;
     },
 
     sendTerminalScrollDelta(delta, unit, event = null) {
@@ -3171,12 +3182,33 @@ function superCliTerminal() {
       const y = event.touches[0].clientY;
       const delta = this.terminalTouchLastY - y;
       this.terminalTouchLastY = y;
-      this.scrollTerminalBuffer(delta, this.terminalLineHeight(), event);
+      this.sendTerminalScrollDelta(delta, this.terminalLineHeight(), event);
     },
 
     endTerminalTouchScroll() {
       this.terminalTouchActive = false;
       this.terminalTouchLastY = 0;
+    },
+
+    // ---- copy / paste ----
+
+    // Fallback for environments without the async Clipboard API (e.g.
+    // non-secure context, older browsers).  Creates a transient textarea,
+    // populates it with a real DOM selection, then calls execCommand('copy').
+    _copyTextFallback(text) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text || '';
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (_) {}
     },
 
     normalizeTerminalPasteData(data) {
