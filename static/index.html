@@ -20,7 +20,7 @@
   .triage-bash { background-color: #64748b; }
   .triage-completed { background-color: #3b82f6; }
   pre { white-space: pre-wrap; word-break: break-all; }
-  .terminal-frame { min-height: 30rem; height: 100%; background: #020617; overscroll-behavior: contain; touch-action: none; }
+  .terminal-frame { min-height: 30rem; height: 100%; background: #020617; }
   .terminal-frame .xterm { height: 100%; padding: 10px; }
   .terminal-frame .xterm-screen { height: 100%; }
   .terminal-frame .xterm-viewport { background-color: #020617 !important; }
@@ -996,7 +996,7 @@
       <!-- tab content area -->
       <div class="flex-1 min-w-0 flex flex-col">
         <!-- terminal -->
-        <div x-show="terminalPanelTab === 'terminal'" class="terminal-frame flex-1 min-w-0 overflow-hidden rounded-r lg:h-full"
+        <div x-show="terminalPanelTab === 'terminal'" class="terminal-frame flex-1 min-w-0 rounded-r lg:h-full"
              x-ref="terminalOutput"
              :class="terminalDropActive ? 'ring-2 ring-blue-300' : ''"
              @dragover.prevent="handleTerminalDragOver($event)"
@@ -3019,7 +3019,7 @@ function superCliTerminal() {
         const text = event.clipboardData?.getData('text/plain') || '';
         if (!text) return;
         event.preventDefault();
-        event.stopImmediatePropagation();
+        event.stopPropagation();
         this.sendTerminalPaste(text);
         this.terminal?.focus();
       };
