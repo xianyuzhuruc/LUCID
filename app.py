@@ -13,6 +13,7 @@ import os
 import select
 import shlex
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -848,15 +849,19 @@ def _stop_local_agent() -> None:
         pid = 0
     if pid > 0:
         with contextlib.suppress(OSError):
+            os.killpg(pid, 15)
+        with contextlib.suppress(OSError):
             os.kill(pid, 15)
         deadline = time.time() + 2
         while time.time() < deadline:
             try:
-                os.kill(pid, 0)
+                os.killpg(pid, 0)
             except OSError:
                 break
             time.sleep(0.1)
         else:
+            with contextlib.suppress(OSError):
+                os.killpg(pid, 9)
             with contextlib.suppress(OSError):
                 os.kill(pid, 9)
     with contextlib.suppress(OSError):
@@ -1435,14 +1440,94 @@ def api_node_remove(node_id: str) -> dict:
 
 def _cleanup_local_agent_dir(node: nodes.NodeConfig) -> None:
     _stop_local_agent()
+    _cleanup_local_managed_terminals()
     source = HERE.resolve()
     target = Path(node.remote_dir or "~/.lucid/agent").expanduser().resolve()
     if target == source or source in target.parents or target in source.parents:
         raise HTTPException(400, f"refusing to remove unsafe local agent directory: {target}")
     try:
-        shutil.rmtree(target, ignore_errors=True)
+        shutil.rmtree(target)
+    except FileNotFoundError:
+        return
     except OSError as e:
         raise HTTPException(500, f"failed to remove local agent directory {target}: {e}") from e
+    if target.exists():
+        raise HTTPException(500, f"failed to remove local agent directory {target}: directory still exists")
+
+
+def _cleanup_local_managed_terminals() -> None:
+    rows = registry.all_managed_processes()
+    sessions = {str(row.get("tmux_session") or "") for row in rows if row.get("tmux_session")}
+    pids = {int(row["pid"]) for row in rows if int(row.get("pid") or 0) > 0}
+    pids.update(_lucid_tmux_server_pids(sessions))
+    _terminate_pids(pids)
+    registry.delete_all_processes()
+
+
+def _lucid_tmux_server_pids(sessions: set[str]) -> set[int]:
+    found: set[int] = set()
+    proc_root = Path("/proc")
+    if not proc_root.exists():
+        return found
+    current_uid = os.geteuid()
+    for item in proc_root.iterdir():
+        if not item.name.isdigit():
+            continue
+        pid = int(item.name)
+        try:
+            status = (item / "status").read_text(encoding="utf-8", errors="replace")
+            uid_line = next((line for line in status.splitlines() if line.startswith("Uid:")), "")
+            uid = int(uid_line.split()[1]) if uid_line else -1
+            if uid != current_uid:
+                continue
+            raw_cmd = (item / "cmdline").read_bytes()
+        except (OSError, ValueError, StopIteration):
+            continue
+        cmd = raw_cmd.replace(b"\0", b" ").decode("utf-8", errors="replace")
+        if "tmux" not in cmd:
+            continue
+        if "lucid-" in cmd or any(session and session in cmd for session in sessions):
+            found.add(pid)
+    return found
+
+
+def _terminate_pids(pids: set[int]) -> None:
+    if not pids:
+        return
+    current_pid = os.getpid()
+    current_pgid = os.getpgrp()
+    for pid in sorted(pids):
+        if pid <= 0 or pid == current_pid:
+            continue
+        with contextlib.suppress(OSError):
+            pgid = os.getpgid(pid)
+            if pgid != current_pgid:
+                os.killpg(pgid, signal.SIGTERM)
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        alive = [pid for pid in pids if pid != current_pid and _pid_exists(pid)]
+        if not alive:
+            return
+        time.sleep(0.1)
+    for pid in sorted(pids):
+        if pid <= 0 or pid == current_pid:
+            continue
+        with contextlib.suppress(OSError):
+            pgid = os.getpgid(pid)
+            if pgid != current_pgid:
+                os.killpg(pgid, signal.SIGKILL)
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 @app.get("/api/nodes/{node_id}/paths")

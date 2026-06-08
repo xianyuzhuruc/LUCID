@@ -96,6 +96,23 @@ def delete_process(process_id: str) -> None:
         conn.execute("DELETE FROM managed_process WHERE id = ?", (process_id,))
 
 
+def all_managed_processes() -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute("""
+            SELECT id, platform, pid, tmux_session
+            FROM managed_process
+        """).fetchall()
+    return [
+        {"id": proc_id, "platform": platform, "pid": int(pid), "tmux_session": tmux_session or ""}
+        for proc_id, platform, pid, tmux_session in rows
+    ]
+
+
+def delete_all_processes() -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM managed_process")
+
+
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
