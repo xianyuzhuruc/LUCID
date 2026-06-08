@@ -19,6 +19,7 @@ has_cmd() {
 
 needs_install() {
     if [ -x "$env_dir/bin/tmux" ]; then return 1; fi
+    if has_cmd tmux; then return 1; fi
     return 0
 }
 
@@ -112,7 +113,7 @@ install_runtime() {
 
 verify_install() {
     missing=""
-    if [ ! -x "$env_dir/bin/tmux" ]; then missing="$missing tmux"; fi
+    if [ ! -x "$env_dir/bin/tmux" ] && ! has_cmd tmux; then missing="$missing tmux"; fi
     if [ -n "$missing" ]; then
         log "rootless runtime did not provide:$missing"
         exit 1

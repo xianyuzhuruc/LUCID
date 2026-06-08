@@ -736,6 +736,16 @@ def _copy_local_agent_tree(agent_dir: Path) -> None:
     target = agent_dir.expanduser().resolve()
     if target == source or source in target.parents:
         raise HTTPException(400, f"local agent directory cannot be inside the current checkout: {target}")
+    runtime_dir = target / ".lucid-runtime"
+    preserved_runtime: Path | None = None
+    if runtime_dir.exists():
+        preserve_parent = nodes.STATE_DIR / ".local-agent-preserve"
+        preserve_parent.mkdir(parents=True, exist_ok=True)
+        preserved_runtime = preserve_parent / f"lucid-runtime-{uuid.uuid4().hex}"
+        try:
+            shutil.move(str(runtime_dir), str(preserved_runtime))
+        except OSError as e:
+            raise HTTPException(500, f"failed to preserve local agent runtime: {e}") from e
     shutil.rmtree(target, ignore_errors=True)
     ignore = shutil.ignore_patterns(
         ".agents",
@@ -751,7 +761,13 @@ def _copy_local_agent_tree(agent_dir: Path) -> None:
     )
     try:
         shutil.copytree(source, target, ignore=ignore)
+        if preserved_runtime and preserved_runtime.exists():
+            shutil.move(str(preserved_runtime), str(runtime_dir))
     except OSError as e:
+        if preserved_runtime and preserved_runtime.exists():
+            with contextlib.suppress(OSError):
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(preserved_runtime), str(runtime_dir))
         raise HTTPException(500, f"local agent checkout copy failed: {e}") from e
 
 
