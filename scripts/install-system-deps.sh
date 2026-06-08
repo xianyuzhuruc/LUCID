@@ -17,9 +17,35 @@ has_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
+tmux_works() {
+    [ -x "$1" ] && "$1" -V >/dev/null 2>&1
+}
+
+find_working_tmux() {
+    if tmux_works "$env_dir/bin/tmux"; then return 0; fi
+    old_ifs="$IFS"
+    IFS=:
+    for dir in $PATH; do
+        IFS="$old_ifs"
+        [ -n "$dir" ] || continue
+        candidate="$dir/tmux"
+        [ "$candidate" = "$env_dir/bin/tmux" ] && continue
+        if tmux_works "$candidate"; then return 0; fi
+        IFS=:
+    done
+    IFS="$old_ifs"
+    return 1
+}
+
+quarantine_broken_runtime_tmux() {
+    tmux_path="$env_dir/bin/tmux"
+    if [ -e "$tmux_path" ] && ! tmux_works "$tmux_path"; then
+        mv "$tmux_path" "$tmux_path.broken.$(date +%s)" 2>/dev/null || rm -f "$tmux_path"
+    fi
+}
+
 needs_install() {
-    if [ -x "$env_dir/bin/tmux" ]; then return 1; fi
-    if has_cmd tmux; then return 1; fi
+    if find_working_tmux; then return 1; fi
     return 0
 }
 
@@ -113,12 +139,14 @@ install_runtime() {
 
 verify_install() {
     missing=""
-    if [ ! -x "$env_dir/bin/tmux" ] && ! has_cmd tmux; then missing="$missing tmux"; fi
+    if ! find_working_tmux; then missing="$missing tmux"; fi
     if [ -n "$missing" ]; then
         log "rootless runtime did not provide:$missing"
         exit 1
     fi
 }
+
+quarantine_broken_runtime_tmux
 
 if needs_install; then
     install_runtime

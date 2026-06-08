@@ -738,7 +738,7 @@ def _copy_local_agent_tree(agent_dir: Path) -> None:
         raise HTTPException(400, f"local agent directory cannot be inside the current checkout: {target}")
     runtime_dir = target / ".lucid-runtime"
     preserved_runtime: Path | None = None
-    if runtime_dir.exists():
+    if runtime_dir.exists() and _local_agent_runtime_is_reusable(runtime_dir):
         preserve_parent = nodes.STATE_DIR / ".local-agent-preserve"
         preserve_parent.mkdir(parents=True, exist_ok=True)
         preserved_runtime = preserve_parent / f"lucid-runtime-{uuid.uuid4().hex}"
@@ -769,6 +769,24 @@ def _copy_local_agent_tree(agent_dir: Path) -> None:
                 target.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(preserved_runtime), str(runtime_dir))
         raise HTTPException(500, f"local agent checkout copy failed: {e}") from e
+
+
+def _local_agent_runtime_is_reusable(runtime_dir: Path) -> bool:
+    tmux = runtime_dir / "env" / "bin" / "tmux"
+    if not tmux.exists():
+        return True
+    if not os.access(tmux, os.X_OK):
+        return False
+    try:
+        result = subprocess.run(
+            [str(tmux), "-V"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def _write_local_agent_env(agent_dir: Path, agent_port: int) -> None:
@@ -1389,27 +1407,42 @@ def api_node_delete(node_id: str) -> dict:
 
 @app.post("/api/nodes/{node_id}/remove")
 def api_node_remove(node_id: str) -> dict:
-    """Remove a node: kill remote agent, clear remote dir, then delete local config."""
+    """Remove a node: stop its agent, clear its agent dir, then delete config."""
     node = nodes.node_by_id(node_id)
     if not node:
         raise HTTPException(404, f"unknown node {node_id}")
-    # 1) Remote cleanup via SSH (kill agent + rm -rf agent dir)
+    local_ok = False
     remote_ok = False
-    if node.kind == "ssh":
+    if _is_local_enabled_node(node):
+        _cleanup_local_agent_dir(node)
+        local_ok = True
+    elif node.kind == "ssh":
         cleanup_result = ssh_deploy.cleanup_remote_node(node_id)
         remote_ok = cleanup_result.get("ok", False)
         if not remote_ok:
             msg = cleanup_result.get("error", "unknown")
             raise HTTPException(502, f"remote cleanup failed: {msg}")
-    # 2) Remove local config (also kills any active SSH tunnel)
     try:
         result = nodes.remove_node_config(node_id)
     except OSError as e:
         raise HTTPException(500, f"failed to remove node config: {e}") from e
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "remove config failed"))
+    result["local_cleaned"] = local_ok
     result["remote_cleaned"] = remote_ok
     return result
+
+
+def _cleanup_local_agent_dir(node: nodes.NodeConfig) -> None:
+    _stop_local_agent()
+    source = HERE.resolve()
+    target = Path(node.remote_dir or "~/.lucid/agent").expanduser().resolve()
+    if target == source or source in target.parents or target in source.parents:
+        raise HTTPException(400, f"refusing to remove unsafe local agent directory: {target}")
+    try:
+        shutil.rmtree(target, ignore_errors=True)
+    except OSError as e:
+        raise HTTPException(500, f"failed to remove local agent directory {target}: {e}") from e
 
 
 @app.get("/api/nodes/{node_id}/paths")

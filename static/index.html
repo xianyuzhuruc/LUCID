@@ -340,7 +340,7 @@
                       :disabled="removingNodeId === n.id || deletingNodeId === n.id"
                       class="shrink-0 rounded border border-red-300 bg-red-50 dark:bg-gray-700 px-2 py-0.5 text-[10px] text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40"
                       x-text="removingNodeId === n.id ? 'Removing...' : 'Remove'"
-                      x-show="n.kind === 'ssh'"></button>
+                      x-show="n.kind === 'ssh' || isLocalNode(n)"></button>
               <button @click="deleteNode(n)"
                       :disabled="deletingNodeId === n.id || removingNodeId === n.id"
                       class="shrink-0 rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-0.5 text-[10px] text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
@@ -3605,7 +3605,8 @@ function superCliTerminal() {
 
     async deleteNode(n) {
       const label = n.name || n.id;
-      if (!confirm('Delete node "' + label + '"?\n\nThis removes the node config but leaves the remote agent intact.\nYou can re-add the node later without re-deploying.')) return;
+      const agentText = this.isLocalNode(n) ? 'local agent directory' : 'remote agent';
+      if (!confirm('Delete node "' + label + '"?\n\nThis removes the node config but leaves the ' + agentText + ' intact.\nYou can re-add the node later without re-deploying.')) return;
       this.deletingNodeId = n.id;
       try {
         const r = await fetch('/api/nodes/' + encodeURIComponent(n.id), { method: 'DELETE' });
@@ -3627,10 +3628,16 @@ function superCliTerminal() {
 
     async removeNode(n) {
       const label = n.name || n.id;
+      const local = this.isLocalNode(n);
+      const details = local
+        ? '\n- Stop the local agent process'
+          + '\n- Delete the local ~/.lucid/agent directory'
+          + '\n- Remove the local node config'
+        : '\n- Kill the remote agent process'
+          + '\n- Delete the remote ~/.lucid/agent directory'
+          + '\n- Remove the local node config';
       if (!confirm('Remove node "' + label + '"?\n\nThis will:'
-          + '\n• Kill the remote agent process'
-          + '\n• Delete the remote ~/.lucid/agent directory'
-          + '\n• Remove the local node config'
+          + details
           + '\n\nThis CANNOT be undone. Use Delete if you only want to remove local config.')) return;
       this.removingNodeId = n.id;
       try {
@@ -3640,7 +3647,7 @@ function superCliTerminal() {
           this.toast('Remove failed: ' + (d.detail || d.error || ''));
           return;
         }
-        this.toast('Removed node ' + (d.name || d.node_id) + (d.remote_cleaned ? ' (remote cleaned)' : ''));
+        this.toast('Removed node ' + (d.name || d.node_id) + (d.local_cleaned ? ' (local cleaned)' : d.remote_cleaned ? ' (remote cleaned)' : ''));
         if (this.launchForm.node_id === n.id) this.launchForm.node_id = '';
         if (this.nodeFilter === n.id) this.nodeFilter = '';
         await this.refreshNodes();
