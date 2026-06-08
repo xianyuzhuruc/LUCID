@@ -2952,7 +2952,19 @@ function superCliTerminal() {
         term.focus();
       });
       ws.addEventListener('message', (event) => {
-        term.write(typeof event.data === 'string' ? event.data : '');
+        let data = typeof event.data === 'string' ? event.data : '';
+        if (!data) return;
+        // Strip mouse-tracking enable/disable sequences so xterm.js
+        // never enters mouse mode.  In mouse mode xterm.js forwards
+        // wheel events as SGR escape sequences to the PTY where
+        // claude/codex interprets them as arrow keys.  By keeping
+        // mouse tracking off, xterm.js always handles scrolling
+        // natively in its own viewport.
+        data = data.replace(/\x1b\[\?1000[hl]/g, '')
+                   .replace(/\x1b\[\?1002[hl]/g, '')
+                   .replace(/\x1b\[\?1003[hl]/g, '')
+                   .replace(/\x1b\[\?1006[hl]/g, '');
+        if (data) term.write(data);
       });
       ws.addEventListener('close', () => {
         term.writeln('\r\n\x1b[90m[LUCID] terminal disconnected\x1b[0m');
@@ -2961,6 +2973,9 @@ function superCliTerminal() {
         term.writeln('\r\n\x1b[31m[LUCID] terminal websocket error\x1b[0m');
       });
       this.terminalDataDisposable = term.onData(data => {
+        // Never forward mouse escape sequences to the PTY.
+        // \x1b[M ... (normal mouse)  /  \x1b[< ... (SGR mouse)
+        if (data.startsWith('\x1b[M') || data.startsWith('\x1b[<')) return;
         this.sendTerminalData(data);
       });
       // ---------------------------------------------------------------
