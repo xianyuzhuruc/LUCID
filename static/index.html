@@ -1611,13 +1611,6 @@ function superCliTerminal() {
     terminalDataDisposable: null,
     terminalCopyHandler: null,
     terminalPasteHandler: null,
-    terminalWheelHandler: null,
-    terminalTouchStartHandler: null,
-    terminalTouchMoveHandler: null,
-    terminalTouchEndHandler: null,
-    terminalWheelRemainder: 0,
-    terminalTouchActive: false,
-    terminalTouchLastY: 0,
     terminalLastPasteData: '',
     terminalLastPasteAt: 0,
     terminalDropActive: false,
@@ -2793,26 +2786,6 @@ function superCliTerminal() {
         this.$refs.terminalOutput.removeEventListener('paste', this.terminalPasteHandler, true);
       }
       this.terminalPasteHandler = null;
-      if (this.terminalWheelHandler && this.$refs.terminalOutput) {
-        this.$refs.terminalOutput.removeEventListener('wheel', this.terminalWheelHandler, true);
-      }
-      this.terminalWheelHandler = null;
-      if (this.terminalTouchStartHandler && this.$refs.terminalOutput) {
-        this.$refs.terminalOutput.removeEventListener('touchstart', this.terminalTouchStartHandler, true);
-      }
-      if (this.terminalTouchMoveHandler && this.$refs.terminalOutput) {
-        this.$refs.terminalOutput.removeEventListener('touchmove', this.terminalTouchMoveHandler, true);
-      }
-      if (this.terminalTouchEndHandler && this.$refs.terminalOutput) {
-        this.$refs.terminalOutput.removeEventListener('touchend', this.terminalTouchEndHandler, true);
-        this.$refs.terminalOutput.removeEventListener('touchcancel', this.terminalTouchEndHandler, true);
-      }
-      this.terminalTouchStartHandler = null;
-      this.terminalTouchMoveHandler = null;
-      this.terminalTouchEndHandler = null;
-      this.terminalWheelRemainder = 0;
-      this.terminalTouchActive = false;
-      this.terminalTouchLastY = 0;
       this.terminalLastPasteData = '';
       this.terminalLastPasteAt = 0;
       if (this.terminal) this.terminal.dispose();
@@ -2964,7 +2937,6 @@ function superCliTerminal() {
       this.terminalFitAddon = fitAddon;
       this.terminalLastPasteData = '';
       this.terminalLastPasteAt = 0;
-      this.terminalWheelRemainder = 0;
       this.fitTerminal();
       const windowKey = this.windowKey(this.terminalWindow);
 
@@ -3054,26 +3026,12 @@ function superCliTerminal() {
       el.addEventListener('paste', this.terminalPasteHandler, true);
 
       // ---------------------------------------------------------------
-      //  Scroll: wheel / touch → WebSocket {type:'scroll'} → backend
-      //  tmux copy-mode.  Identical code path for local (_scroll_tmux_history)
-      //  and remote (proxied through _proxy_terminal_ws to agent).
+      //  Scroll: handled entirely by xterm.js viewport (scrollback: 100000).
+      //  Do NOT intercept wheel/touch events — xterm.js's built-in
+      //  scrollbar and wheel handling is the only scroll mechanism.
+      //  Both local and remote terminals receive the same PTY output
+      //  via WebSocket, so xterm.js scrolls identically everywhere.
       // ---------------------------------------------------------------
-      this.terminalWheelHandler = (event) => {
-        const delta = event.deltaY || event.deltaX || 0;
-        if (!delta) return;
-        const lineDeltaMode = typeof WheelEvent !== 'undefined' ? WheelEvent.DOM_DELTA_LINE : 1;
-        const unit = event.deltaMode === lineDeltaMode ? 1 : this.terminalLineHeight();
-        this.sendTerminalScrollDelta(delta, unit, event);
-      };
-      el.addEventListener('wheel', this.terminalWheelHandler, { capture: true, passive: false });
-
-      this.terminalTouchStartHandler = (event) => this.startTerminalTouchScroll(event);
-      this.terminalTouchMoveHandler = (event) => this.moveTerminalTouchScroll(event);
-      this.terminalTouchEndHandler = () => this.endTerminalTouchScroll();
-      el.addEventListener('touchstart', this.terminalTouchStartHandler, { capture: true, passive: false });
-      el.addEventListener('touchmove', this.terminalTouchMoveHandler, { capture: true, passive: false });
-      el.addEventListener('touchend', this.terminalTouchEndHandler, true);
-      el.addEventListener('touchcancel', this.terminalTouchEndHandler, true);
 
       this.terminalResizeObserver = new ResizeObserver(() => {
         this.fitTerminal();
@@ -3130,52 +3088,6 @@ function superCliTerminal() {
       if (this.terminalSocket?.readyState === WebSocket.OPEN) {
         this.terminalSocket.send(JSON.stringify({ type: 'data', data }));
       }
-    },
-
-    // ================================================================
-    //  Scroll — unified: wheel / touch → WebSocket → tmux copy-mode
-    //  Works identically for local and remote terminals.
-    // ================================================================
-
-    terminalLineHeight() {
-      return this.terminal?._core?._renderService?.dimensions?.css?.cell?.height || 15;
-    },
-
-    sendTerminalScrollDelta(delta, unit, event = null) {
-      if (!this.terminalSocket || this.terminalSocket.readyState !== WebSocket.OPEN || !delta) return false;
-      if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-      this.terminalWheelRemainder += delta / Math.max(1, unit || this.terminalLineHeight());
-      const direction = this.terminalWheelRemainder > 0 ? 'down' : 'up';
-      const lines = Math.min(200, Math.floor(Math.abs(this.terminalWheelRemainder)));
-      if (!lines) return true;
-      this.terminalWheelRemainder += direction === 'down' ? -lines : lines;
-      this.terminalSocket.send(JSON.stringify({ type: 'scroll', direction, lines }));
-      return true;
-    },
-
-    startTerminalTouchScroll(event) {
-      if (!event?.touches || event.touches.length !== 1) return;
-      this.terminalTouchActive = true;
-      this.terminalTouchLastY = event.touches[0].clientY;
-    },
-
-    moveTerminalTouchScroll(event) {
-      if (!this.terminalTouchActive || !event?.touches || event.touches.length !== 1) {
-        this.endTerminalTouchScroll();
-        return;
-      }
-      const y = event.touches[0].clientY;
-      const delta = this.terminalTouchLastY - y;
-      this.terminalTouchLastY = y;
-      this.sendTerminalScrollDelta(delta, this.terminalLineHeight(), event);
-    },
-
-    endTerminalTouchScroll() {
-      this.terminalTouchActive = false;
-      this.terminalTouchLastY = 0;
     },
 
     // ================================================================
