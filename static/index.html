@@ -2918,8 +2918,6 @@ function superCliTerminal() {
         scrollback: 100000,
         scrollOnUserInput: true,
         scrollOnWrite: false,
-        fastScrollModifier: 'alt',
-        fastScrollSensitivity: 5,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
         fontSize: 12,
         lineHeight: 1.25,
@@ -2938,6 +2936,33 @@ function superCliTerminal() {
       this.terminalLastPasteData = '';
       this.terminalLastPasteAt = 0;
       this.fitTerminal();
+
+      // ---------------------------------------------------------------
+      //  Block mouse-tracking at the xterm.js PARSER level.
+      //
+      //  claude / codex send DECSET sequences to enable mouse reporting
+      //  so they can receive wheel / click events.  If xterm.js enters
+      //  mouse mode it forwards every scroll as an SGR escape sequence
+      //  to the PTY where the app turns it into arrow keys — breaking
+      //  native scrolling entirely.
+      //
+      //  registerCsiHandler intercepts CSI sequences BEFORE xterm.js
+      //  processes them, so partial chunks are never a problem (the
+      //  parser buffers and reassembles them internally).
+      // ---------------------------------------------------------------
+      const MOUSE_DECSET_CODES = new Set([9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015]);
+      const _blockMouseDecset = (params) => {
+        const codes = params.toArray();
+        // Only swallow when EVERY code is mouse-related.  Mixed sequences
+        // like ESC[?25;1000h (show cursor + enable mouse) fall through
+        // to xterm.js for normal processing — we take the small risk that
+        // some mouse mode leaks in rather than breaking other terminal
+        // features.
+        return codes.length > 0 && codes.every(c => MOUSE_DECSET_CODES.has(c));
+      };
+      term.parser.registerCsiHandler({prefix: '?', final: 'h'}, _blockMouseDecset);
+      term.parser.registerCsiHandler({prefix: '?', final: 'l'}, _blockMouseDecset);
+
       const windowKey = this.windowKey(this.terminalWindow);
 
       // Set up WebSocket and ALL event handlers immediately.
@@ -2953,7 +2978,7 @@ function superCliTerminal() {
       });
       ws.addEventListener('message', (event) => {
         const data = typeof event.data === 'string' ? event.data : '';
-        if (data) term.write(this._sanitizeMouseSequences(data));
+        if (data) term.write(data);
       });
       ws.addEventListener('close', () => {
         term.writeln('\r\n\x1b[90m[LUCID] terminal disconnected\x1b[0m');
@@ -2962,11 +2987,10 @@ function superCliTerminal() {
         term.writeln('\r\n\x1b[31m[LUCID] terminal websocket error\x1b[0m');
       });
       this.terminalDataDisposable = term.onData(data => {
-        // Drop mouse escape sequences (normal \x1b[M..., SGR \x1b[<...)
-        // so xterm.js wheel→PTY forwarding never happens.  Also drop
-        // the standalone ESC that xterm.js sometimes emits as a mouse-
-        // mode abort when the user clicks without dragging.
-        if (data === '\x1b' || data.startsWith('\x1b[M') || data.startsWith('\x1b[<')) return;
+        // Drop mouse-event escape sequences so xterm.js never forwards
+        // wheel events to the PTY even if mouse mode leaked in somehow.
+        // \x1b[M  = X10 mouse event    \x1b[< = SGR mouse event
+        if (data.startsWith('\x1b[M') || data.startsWith('\x1b[<')) return;
         this.sendTerminalData(data);
       });
       // ---------------------------------------------------------------
@@ -3050,19 +3074,9 @@ function superCliTerminal() {
       this.primeTerminalScrollback(term, this.terminalWindow, windowKey);
     },
 
-    // Strip ALL DECSET/DECRST mouse-tracking sequences (with optional
-    // semicolon parameters) from PTY output.  Called by ws.onmessage,
-    // primeTerminalScrollback, and anywhere else that writes raw PTY
-    // data into xterm.js.  Without this, claude/codex enables xterm.js
-    // mouse mode and every wheel event becomes an arrow-key escape
-    // sequence sent back to the PTY instead of scrolling the viewport.
-    _sanitizeMouseSequences(data) {
-      if (!data) return data;
-      // Matches CSI ? 1000/1002/1003/1005/1006/1015 h/l with optional
-      // semicolon parameters: \x1b[?1000h, \x1b[?1006;0l, etc.
-      return data.replace(/\x1b\[\?(?:100[0-6]|1015)(?:;[0-9]*)*[hl]/g, '');
-    },
-
+    // Load scrollback history.  Mouse-tracking is already blocked at the
+    // xterm.js parser level via registerCsiHandler, so data flows through
+    // safely without any string-level sanitization.
     async primeTerminalScrollback(term, w, expectedKey) {
       try {
         const url = new URL(this.terminalUrl(w, 'terminal'), window.location.href);
@@ -3072,21 +3086,10 @@ function superCliTerminal() {
         if (!r.ok || !d.ok || this.windowKey(this.terminalWindow) !== expectedKey || this.terminal !== term) return;
         const output = String(d.output || '');
         if (output) {
-          // Sanitise scrollback the same way live PTY output is sanitised,
-          // then write to xterm.js.
-          const clean = this._sanitizeMouseSequences(output.replace(/\r?\n/g, '\r\n'));
-          await new Promise(resolve => term.write(clean, resolve));
-          // If any mouse-tracking enable survived (e.g. because it was
-          // split across chunk boundaries in the scrollback capture),
-          // force-disable it now so xterm.js stays in normal scroll mode.
-          term.write(this._mouseDisableSequence());
+          await new Promise(resolve => term.write(output.replace(/\r?\n/g, '\r\n'), resolve));
           term.scrollToBottom();
         }
       } catch (_) {}
-    },
-
-    _mouseDisableSequence() {
-      return '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l';
     },
 
     fitTerminal() {
