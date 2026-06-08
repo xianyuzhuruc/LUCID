@@ -2952,19 +2952,8 @@ function superCliTerminal() {
         term.focus();
       });
       ws.addEventListener('message', (event) => {
-        let data = typeof event.data === 'string' ? event.data : '';
-        if (!data) return;
-        // Strip mouse-tracking enable/disable sequences so xterm.js
-        // never enters mouse mode.  In mouse mode xterm.js forwards
-        // wheel events as SGR escape sequences to the PTY where
-        // claude/codex interprets them as arrow keys.  By keeping
-        // mouse tracking off, xterm.js always handles scrolling
-        // natively in its own viewport.
-        data = data.replace(/\x1b\[\?1000[hl]/g, '')
-                   .replace(/\x1b\[\?1002[hl]/g, '')
-                   .replace(/\x1b\[\?1003[hl]/g, '')
-                   .replace(/\x1b\[\?1006[hl]/g, '');
-        if (data) term.write(data);
+        const data = typeof event.data === 'string' ? event.data : '';
+        if (data) term.write(this._sanitizeMouseSequences(data));
       });
       ws.addEventListener('close', () => {
         term.writeln('\r\n\x1b[90m[LUCID] terminal disconnected\x1b[0m');
@@ -2973,9 +2962,11 @@ function superCliTerminal() {
         term.writeln('\r\n\x1b[31m[LUCID] terminal websocket error\x1b[0m');
       });
       this.terminalDataDisposable = term.onData(data => {
-        // Never forward mouse escape sequences to the PTY.
-        // \x1b[M ... (normal mouse)  /  \x1b[< ... (SGR mouse)
-        if (data.startsWith('\x1b[M') || data.startsWith('\x1b[<')) return;
+        // Drop mouse escape sequences (normal \x1b[M..., SGR \x1b[<...)
+        // so xterm.js wheel→PTY forwarding never happens.  Also drop
+        // the standalone ESC that xterm.js sometimes emits as a mouse-
+        // mode abort when the user clicks without dragging.
+        if (data === '\x1b' || data.startsWith('\x1b[M') || data.startsWith('\x1b[<')) return;
         this.sendTerminalData(data);
       });
       // ---------------------------------------------------------------
@@ -3059,6 +3050,19 @@ function superCliTerminal() {
       this.primeTerminalScrollback(term, this.terminalWindow, windowKey);
     },
 
+    // Strip ALL DECSET/DECRST mouse-tracking sequences (with optional
+    // semicolon parameters) from PTY output.  Called by ws.onmessage,
+    // primeTerminalScrollback, and anywhere else that writes raw PTY
+    // data into xterm.js.  Without this, claude/codex enables xterm.js
+    // mouse mode and every wheel event becomes an arrow-key escape
+    // sequence sent back to the PTY instead of scrolling the viewport.
+    _sanitizeMouseSequences(data) {
+      if (!data) return data;
+      // Matches CSI ? 1000/1002/1003/1005/1006/1015 h/l with optional
+      // semicolon parameters: \x1b[?1000h, \x1b[?1006;0l, etc.
+      return data.replace(/\x1b\[\?(?:100[0-6]|1015)(?:;[0-9]*)*[hl]/g, '');
+    },
+
     async primeTerminalScrollback(term, w, expectedKey) {
       try {
         const url = new URL(this.terminalUrl(w, 'terminal'), window.location.href);
@@ -3068,10 +3072,21 @@ function superCliTerminal() {
         if (!r.ok || !d.ok || this.windowKey(this.terminalWindow) !== expectedKey || this.terminal !== term) return;
         const output = String(d.output || '');
         if (output) {
-          await new Promise(resolve => term.write(output.replace(/\r?\n/g, '\r\n'), resolve));
+          // Sanitise scrollback the same way live PTY output is sanitised,
+          // then write to xterm.js.
+          const clean = this._sanitizeMouseSequences(output.replace(/\r?\n/g, '\r\n'));
+          await new Promise(resolve => term.write(clean, resolve));
+          // If any mouse-tracking enable survived (e.g. because it was
+          // split across chunk boundaries in the scrollback capture),
+          // force-disable it now so xterm.js stays in normal scroll mode.
+          term.write(this._mouseDisableSequence());
           term.scrollToBottom();
         }
       } catch (_) {}
+    },
+
+    _mouseDisableSequence() {
+      return '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l';
     },
 
     fitTerminal() {
