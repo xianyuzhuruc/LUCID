@@ -2967,8 +2967,10 @@ function superCliTerminal() {
       this.terminalWheelRemainder = 0;
       this.fitTerminal();
       const windowKey = this.windowKey(this.terminalWindow);
-      await this.primeTerminalScrollback(term, this.terminalWindow, windowKey);
-      if (!this.terminalWindow || this.windowKey(this.terminalWindow) !== windowKey || this.terminal !== term) return;
+
+      // Set up WebSocket and ALL event handlers immediately.
+      // Never block on a slow scrollback-history fetch — the terminal
+      // must start receiving data right away.
       const ws = new WebSocket(this.terminalWsUrl(this.terminalWindow));
       this.terminalSocket = ws;
       term.writeln('\r\n\x1b[90m[LUCID] connecting to tmux...\x1b[0m');
@@ -2998,8 +3000,8 @@ function superCliTerminal() {
           this.terminal?.focus();
           return false;
         }
-        // Only intercept Ctrl+C (without Shift) when there is a selection, to copy instead of sending SIGINT.
-        // Let Ctrl+Shift+C pass through so xterm.js handles it natively via its own clipboard support.
+        // Only intercept Ctrl+C (without Shift) when there is a selection.
+        // Ctrl+Shift+C passes through so xterm.js handles it natively.
         const isCopyShortcut = ctrlOrMeta && key === 'c' && !event.shiftKey;
         if (isCopyShortcut && term.hasSelection()) {
           event.preventDefault();
@@ -3047,6 +3049,10 @@ function superCliTerminal() {
         this.sendTerminalResize();
       });
       this.terminalResizeObserver.observe(el);
+
+      // Load scrollback history asynchronously in the background.
+      // Never awaits — the terminal is already live.
+      this.primeTerminalScrollback(term, this.terminalWindow, windowKey);
     },
 
     async primeTerminalScrollback(term, w, expectedKey) {
