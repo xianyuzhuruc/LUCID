@@ -2929,7 +2929,7 @@ function superCliTerminal() {
       };
     },
 
-    startTerminalSession() {
+    async startTerminalSession() {
       if (!this.terminalWindow) return;
       const el = this.$refs.terminalOutput;
       if (!el) return;
@@ -2966,11 +2966,13 @@ function superCliTerminal() {
       this.terminalLastPasteAt = 0;
       this.terminalWheelRemainder = 0;
       this.fitTerminal();
+      const windowKey = this.windowKey(this.terminalWindow);
+      await this.primeTerminalScrollback(term, this.terminalWindow, windowKey);
+      if (!this.terminalWindow || this.windowKey(this.terminalWindow) !== windowKey || this.terminal !== term) return;
       const ws = new WebSocket(this.terminalWsUrl(this.terminalWindow));
       this.terminalSocket = ws;
       term.writeln('\r\n\x1b[90m[LUCID] connecting to tmux...\x1b[0m');
       ws.addEventListener('open', () => {
-        term.clear();
         this.fitTerminal();
         this.sendTerminalResize();
         term.focus();
@@ -3050,6 +3052,21 @@ function superCliTerminal() {
       this.terminalResizeObserver.observe(el);
     },
 
+    async primeTerminalScrollback(term, w, expectedKey) {
+      try {
+        const url = new URL(this.terminalUrl(w, 'terminal'), window.location.href);
+        url.searchParams.set('lines', '5000');
+        const r = await fetch(url.toString());
+        const d = await r.json();
+        if (!r.ok || !d.ok || this.windowKey(this.terminalWindow) !== expectedKey || this.terminal !== term) return;
+        const output = String(d.output || '');
+        if (output) {
+          await new Promise(resolve => term.write(output.replace(/\r?\n/g, '\r\n'), resolve));
+          term.scrollToBottom();
+        }
+      } catch (_) {}
+    },
+
     fitTerminal() {
       try {
         this.terminalFitAddon?.fit();
@@ -3087,9 +3104,7 @@ function superCliTerminal() {
       if (!delta) return;
       const lineDeltaMode = typeof WheelEvent !== 'undefined' ? WheelEvent.DOM_DELTA_LINE : 1;
       const unit = event.deltaMode === lineDeltaMode ? 1 : this.terminalLineHeight();
-      const forceTmuxScroll = event.altKey || event.shiftKey;
-      if (!forceTmuxScroll && this.scrollTerminalBuffer(delta, unit, event)) return;
-      this.sendTerminalScrollDelta(delta, unit, event);
+      this.scrollTerminalBuffer(delta, unit, event);
     },
 
     terminalLineHeight() {
@@ -3141,8 +3156,7 @@ function superCliTerminal() {
       const y = event.touches[0].clientY;
       const delta = this.terminalTouchLastY - y;
       this.terminalTouchLastY = y;
-      if (this.scrollTerminalBuffer(delta, this.terminalLineHeight(), event)) return;
-      this.sendTerminalScrollDelta(delta, this.terminalLineHeight(), event);
+      this.scrollTerminalBuffer(delta, this.terminalLineHeight(), event);
     },
 
     endTerminalTouchScroll() {
