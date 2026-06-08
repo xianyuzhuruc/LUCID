@@ -2991,46 +2991,40 @@ function superCliTerminal() {
       this.terminalDataDisposable = term.onData(data => {
         this.sendTerminalData(data);
       });
+      // ---------------------------------------------------------------
+      //  Keyboard shortcut handler (runs before xterm.js sees the key)
+      // ---------------------------------------------------------------
       term.attachCustomKeyEventHandler((event) => {
         if (event.type !== 'keydown') return true;
         const key = (event.key || '').toLowerCase();
         const ctrlOrMeta = event.ctrlKey || event.metaKey;
 
-        // Paste: Ctrl+V / Shift+Insert — let the native paste event + our
-        // paste handler take care of it; just focus the terminal first.
-        const pasteShortcut = (ctrlOrMeta && key === 'v') || (event.shiftKey && key === 'insert');
-        if (pasteShortcut) {
+        // Paste: Ctrl+V / Shift+Insert → focus terminal so the native
+        // 'paste' event fires; our paste handler forwards to PTY.
+        if ((ctrlOrMeta && key === 'v') || (event.shiftKey && key === 'insert')) {
           this.terminal?.focus();
           return false;
         }
 
-        // Copy: Ctrl+C (without Shift) when xterm has a selection.
-        // Ctrl+Shift+C passes through so xterm.js handles it natively.
+        // Copy: Ctrl+C with xterm selection → write clipboard ourselves.
+        // Ctrl+Shift+C passes through → browser fires native 'copy' →
+        // our terminalCopyHandler below writes xterm selection to
+        // event.clipboardData.  Both paths end up calling the same
+        // _writeClipboard helper for the actual copy.
         if (ctrlOrMeta && key === 'c' && !event.shiftKey && term.hasSelection()) {
-          const text = term.getSelection();
-          // Write to clipboard via the platform-native Clipboard API,
-          // falling back to the textarea+execCommand trick when the API
-          // is unavailable or restricted (e.g. non-secure context).
-          if (navigator.clipboard?.writeText) {
-            navigator.clipboard.writeText(text).then(() => {
-              this.clearTerminalSelection();
-            }).catch(() => {
-              this._copyTextFallback(text);
-              this.clearTerminalSelection();
-            });
-          } else {
-            this._copyTextFallback(text);
-            this.clearTerminalSelection();
-          }
+          this._writeClipboard(term.getSelection());
+          this.clearTerminalSelection();
           return false;
         }
+
         return true;
       });
 
-      // Native 'copy' event handler — catches right-click → Copy and
-      // Ctrl+Shift+C (browser-native copy gesture).  xterm.js selection
-      // is canvas-based so there is no DOM selection; we grab it from
-      // the xterm API and stuff it into the clipboard event ourselves.
+      // ---------------------------------------------------------------
+      //  Native 'copy' event — Ctrl+Shift+C, right-click → Copy, etc.
+      //  xterm.js selection is canvas-based (no DOM selection), so we
+      //  grab it from the API and write it to event.clipboardData.
+      // ---------------------------------------------------------------
       this.terminalCopyHandler = (event) => {
         const text = this.terminal?.getSelection() || '';
         if (!text) return;
@@ -3038,16 +3032,17 @@ function superCliTerminal() {
         event.stopImmediatePropagation();
         if (event.clipboardData) {
           event.clipboardData.setData('text/plain', text);
-          this.clearTerminalSelection();
         } else {
-          this._copyTextFallback(text);
-          this.clearTerminalSelection();
+          this._writeClipboard(text);
         }
+        this.clearTerminalSelection();
       };
       el.addEventListener('copy', this.terminalCopyHandler, true);
 
-      // Native 'paste' event handler — Ctrl+V triggers the browser paste
-      // event; we read clipboard and forward to the PTY via WebSocket.
+      // ---------------------------------------------------------------
+      //  Native 'paste' event — Ctrl+V, Shift+Insert, right-click → Paste.
+      //  Reads clipboard via event.clipboardData and forwards to PTY.
+      // ---------------------------------------------------------------
       this.terminalPasteHandler = (event) => {
         const text = event.clipboardData?.getData('text/plain') || '';
         if (!text) return;
@@ -3058,9 +3053,11 @@ function superCliTerminal() {
       };
       el.addEventListener('paste', this.terminalPasteHandler, true);
 
-      // Scroll: wheel → WebSocket scroll command so the backend can
-      // access tmux copy-mode history.  Works identically for local
-      // (_scroll_tmux_history) and remote (proxied to agent).
+      // ---------------------------------------------------------------
+      //  Scroll: wheel / touch → WebSocket {type:'scroll'} → backend
+      //  tmux copy-mode.  Identical code path for local (_scroll_tmux_history)
+      //  and remote (proxied through _proxy_terminal_ws to agent).
+      // ---------------------------------------------------------------
       this.terminalWheelHandler = (event) => {
         const delta = event.deltaY || event.deltaX || 0;
         if (!delta) return;
@@ -3070,7 +3067,6 @@ function superCliTerminal() {
       };
       el.addEventListener('wheel', this.terminalWheelHandler, { capture: true, passive: false });
 
-      // Touch scroll — same WebSocket-based approach.
       this.terminalTouchStartHandler = (event) => this.startTerminalTouchScroll(event);
       this.terminalTouchMoveHandler = (event) => this.moveTerminalTouchScroll(event);
       this.terminalTouchEndHandler = () => this.endTerminalTouchScroll();
@@ -3136,18 +3132,10 @@ function superCliTerminal() {
       }
     },
 
-    // ---- unified scroll helpers (wheel / touch → WebSocket → tmux copy-mode) ----
-
-    // sendTerminalScroll kept for backward compat with any leftover callers;
-    // delegates to the WebSocket path so local and remote terminals work identically.
-    sendTerminalScroll(event) {
-      if (!event) return;
-      const delta = event.deltaY || event.deltaX || 0;
-      if (!delta) return;
-      const lineDeltaMode = typeof WheelEvent !== 'undefined' ? WheelEvent.DOM_DELTA_LINE : 1;
-      const unit = event.deltaMode === lineDeltaMode ? 1 : this.terminalLineHeight();
-      this.sendTerminalScrollDelta(delta, unit, event);
-    },
+    // ================================================================
+    //  Scroll — unified: wheel / touch → WebSocket → tmux copy-mode
+    //  Works identically for local and remote terminals.
+    // ================================================================
 
     terminalLineHeight() {
       return this.terminal?._core?._renderService?.dimensions?.css?.cell?.height || 15;
@@ -3190,25 +3178,40 @@ function superCliTerminal() {
       this.terminalTouchLastY = 0;
     },
 
-    // ---- copy / paste ----
+    // ================================================================
+    //  Copy / paste — unified across keyboard, button, and context-menu
+    // ================================================================
 
-    // Fallback for environments without the async Clipboard API (e.g.
-    // non-secure context, older browsers).  Creates a transient textarea,
-    // populates it with a real DOM selection, then calls execCommand('copy').
-    _copyTextFallback(text) {
+    // Single method for writing text to the system clipboard.
+    // Uses the textarea + execCommand('copy') trick (synchronous, works
+    // in any user-gesture context) then falls back to the async Clipboard
+    // API.  Call ONLY from within a user-gesture handler (keydown, click).
+    _writeClipboard(text) {
+      if (!text) return;
+      // Primary: textarea + execCommand.  Creates a real DOM selection
+      // so the browser's native copy pipeline can grab it.  Synchronous
+      // and works in every browser context (http, https, iframe, etc.).
       try {
         const ta = document.createElement('textarea');
-        ta.value = text || '';
+        ta.value = text;
         ta.setAttribute('readonly', '');
         ta.style.position = 'fixed';
         ta.style.top = '-9999px';
         ta.style.left = '-9999px';
         document.body.appendChild(ta);
-        ta.focus();
         ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
+        this.toast('Copied to clipboard');
+        return;
       } catch (_) {}
+      // Fallback: async Clipboard API.  Requires secure context + focus
+      // + user gesture; fails silently in some environments.
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          this.toast('Copied to clipboard');
+        }).catch(() => {});
+      }
     },
 
     normalizeTerminalPasteData(data) {
@@ -3238,9 +3241,8 @@ function superCliTerminal() {
         this.terminal?.focus();
         return;
       }
-      if (await this.copyText(text)) {
-        this.clearTerminalSelection();
-      }
+      this._writeClipboard(text);
+      this.clearTerminalSelection();
     },
 
     clearTerminalSelection() {
@@ -3564,41 +3566,10 @@ function superCliTerminal() {
       }
     },
 
+    // General-purpose copy (used by plan pane, search results, etc.).
+    // Delegates to the same _writeClipboard used by the terminal.
     async copyText(text) {
-      const value = text || '';
-      try {
-        if (!navigator.clipboard?.writeText) throw new Error('clipboard API unavailable');
-        await navigator.clipboard.writeText(value);
-        this.toast('Copied to clipboard');
-        return true;
-      } catch(e) {
-        if (this.copyTextFallback(value)) {
-          this.toast('Copied to clipboard');
-          return true;
-        } else {
-          this.toast('Copy failed: ' + (e.message || e));
-          return false;
-        }
-      }
-    },
-
-    copyTextFallback(text) {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text || '';
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'fixed';
-        ta.style.top = '-1000px';
-        ta.style.left = '-1000px';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        const copied = document.execCommand('copy');
-        document.body.removeChild(ta);
-        return copied;
-      } catch (_) {
-        return false;
-      }
+      this._writeClipboard(text || '');
     },
 
     async copyPlanContent() {
