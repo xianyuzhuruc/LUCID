@@ -1606,6 +1606,8 @@ function superCliTerminal() {
     terminalFitAddon: null,
     terminalSocket: null,
     terminalResizeObserver: null,
+    terminalWindowResizeHandler: null,
+    terminalResizeReconnectTimer: null,
     terminalDataDisposable: null,
     terminalCopyHandler: null,
     terminalPasteHandler: null,
@@ -1793,6 +1795,9 @@ function superCliTerminal() {
       }
       this._applyHashRoute();
       window.addEventListener('hashchange', () => this._applyHashRoute());
+      this.terminalWindowResizeHandler = () => this.scheduleTerminalReconnectOnResize();
+      window.addEventListener('resize', this.terminalWindowResizeHandler);
+      window.addEventListener('orientationchange', this.terminalWindowResizeHandler);
     },
 
     // Deep-link views via URL hash: #search=<q>, #timeline=<sid>
@@ -2884,6 +2889,15 @@ function superCliTerminal() {
       this.terminalZoom = !this.terminalZoom;
       this.zoomStartedAt = this.terminalZoom ? Date.now() : null;
       this.$nextTick(() => this.reconnectTerminal());
+    },
+
+    scheduleTerminalReconnectOnResize() {
+      if (!this.terminalWindow) return;
+      if (this.terminalResizeReconnectTimer) clearTimeout(this.terminalResizeReconnectTimer);
+      this.terminalResizeReconnectTimer = setTimeout(() => {
+        this.terminalResizeReconnectTimer = null;
+        if (this.terminalWindow) this.reconnectTerminal();
+      }, 350);
     },
 
     async reconnectTerminal() {

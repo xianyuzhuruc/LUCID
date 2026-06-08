@@ -75,6 +75,15 @@ class FilePreviewTest(unittest.TestCase):
         self.assertIn("moveTerminalTouchScroll(event)", html)
         self.assertIn("sendTerminalScrollDelta(delta", html)
 
+    def test_frontend_reconnects_terminal_on_browser_resize(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("terminalWindowResizeHandler", html)
+        self.assertIn("window.addEventListener('resize', this.terminalWindowResizeHandler)", html)
+        self.assertIn("window.addEventListener('orientationchange', this.terminalWindowResizeHandler)", html)
+        self.assertIn("scheduleTerminalReconnectOnResize()", html)
+        self.assertIn("this.reconnectTerminal();", html)
+
 
 if __name__ == "__main__":
     unittest.main()
