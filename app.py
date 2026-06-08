@@ -657,9 +657,10 @@ def _local_file_upload(payload: dict) -> dict:
 def _deploy_local_agent() -> dict:
     remote_dir = "~/.lucid/agent"
     agent_dir = Path(remote_dir).expanduser()
-    agent_port = _pick_local_agent_port()
-    url = f"http://127.0.0.1:{agent_port}"
+    preferred_port = _preferred_local_agent_port(nodes.node_by_id("local"))
     _stop_local_agent()
+    agent_port = _pick_local_agent_port(preferred_port)
+    url = f"http://127.0.0.1:{agent_port}"
     _copy_local_agent_tree(agent_dir)
     _write_local_agent_env(agent_dir, agent_port)
     pid, log_path, pidfile = _start_local_agent_process(agent_dir)
@@ -700,10 +701,34 @@ def _local_agent_node_from_install(install: dict) -> nodes.NodeConfig:
     )
 
 
-def _pick_local_agent_port() -> int:
+def _preferred_local_agent_port(node: nodes.NodeConfig | None) -> int | None:
+    if not node or node.id != "local" or node.kind != "agent":
+        return None
+    try:
+        parsed_port = urllib.parse.urlparse(node.url).port if node.url else None
+    except ValueError:
+        parsed_port = None
+    port = parsed_port or node.agent_port
+    if 0 < int(port or 0) < 65536:
+        return int(port)
+    return None
+
+
+def _pick_local_agent_port(preferred_port: int | None = None) -> int:
+    if preferred_port and _can_bind_local_agent_port(preferred_port):
+        return preferred_port
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _can_bind_local_agent_port(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", port))
+            return True
+    except OSError:
+        return False
 
 
 def _copy_local_agent_tree(agent_dir: Path) -> None:
@@ -1021,10 +1046,9 @@ def _scroll_tmux_history(session_name: str, direction: str, lines: int) -> bool:
         return False
     safe_lines = max(1, min(int(lines or 1), 200))
     command = "scroll-up" if direction == "up" else "scroll-down"
-    if direction == "up":
-        proc = _run_tmux(["tmux", "copy-mode", "-e", "-t", session_name])
-        if proc.returncode != 0:
-            return False
+    proc = _run_tmux(["tmux", "copy-mode", "-e", "-t", session_name])
+    if proc.returncode != 0:
+        return False
     proc = _run_tmux(["tmux", "send-keys", "-t", session_name, "-X", "-N", str(safe_lines), command])
     return proc.returncode == 0
 
@@ -1324,6 +1348,7 @@ def api_node_local_enable() -> dict:
     node = _local_agent_node_from_install(install)
     nodes.write_node_config(node)
     nodes.invalidate_snapshot_cache(node.id)
+    _refresh_snapshot_cache()
     return {
         "ok": True,
         "node": _public_node(node),
@@ -1559,6 +1584,7 @@ def _finish_deploy_job(job_id: str, result: dict[str, Any]) -> None:
     node_id = str(result.get("node_id") or "")
     if node_id:
         nodes.invalidate_snapshot_cache(node_id)
+    _refresh_snapshot_cache()
 
 
 def _fail_deploy_job(job_id: str, error: str) -> None:
