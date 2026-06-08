@@ -2946,13 +2946,26 @@ function superCliTerminal() {
       //  to the PTY where the app turns it into arrow keys — breaking
       //  native scrolling entirely.
       //
-      //  We strip ALL mouse-mode CSI sequences with a single regex.
-      //  DECSET/DECRST sequences are short (~8 bytes) and never split
-      //  across 16KB PTY chunks, so chunk-boundary misses are not a
-      //  practical concern.
+      //  The regex handles BOTH simple single-mode sequences (1000h) AND
+      //  compound multi-mode sequences (1000;1002;1006h) that Claude/Codex
+      //  commonly emit.  It also catches s/r save/restore variants.  Any
+      //  non-mouse modes in a compound sequence are preserved; if every
+      //  mode in the sequence is a mouse mode the entire escape is dropped.
+      //
+      //  Mouse modes filtered: 9 (X10), 1000-1007 (normal/SGR/any-event),
+      //  1015 (urxvt extended).
       // ---------------------------------------------------------------
-      const MOUSE_CSI_RE = /\x1b\[\?(?:9[hl]|100[0-7][hl]|1015[hl])/g;
-      const _filterMouse = (s) => s ? s.replace(MOUSE_CSI_RE, '') : s;
+      const _MOUSE_MODE_NUMS = new Set([9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015]);
+      const _MOUSE_DEC_RE = /\x1b\[\?(\d+(?:;\d+)*)[hlsr]/g;
+      const _filterMouse = (s) => {
+        if (!s) return s;
+        return s.replace(_MOUSE_DEC_RE, (_match, params) => {
+          const remaining = params.split(';').filter(p => !_MOUSE_MODE_NUMS.has(parseInt(p, 10)));
+          if (remaining.length === 0) return '';
+          return '\x1b[?' + remaining.join(';') + _match[_match.length - 1];
+        });
+      };
+      this._filterMouseSequences = _filterMouse;  // also used by primeTerminalScrollback
 
       const windowKey = this.windowKey(this.terminalWindow);
 
@@ -2984,6 +2997,27 @@ function superCliTerminal() {
         if (data.startsWith('\x1b[M') || data.startsWith('\x1b[<')) return;
         this.sendTerminalData(data);
       });
+      // ---------------------------------------------------------------
+      //  Defense-in-depth: monkey-patch xterm.js internal mode handlers
+      //  to prevent mouse tracking from EVER being enabled — even if a
+      //  compound DECSET sequence somehow leaks past the _filterMouse
+      //  regex above.  setMode / resetMode process DEC private mode
+      //  sequences (CSI ? … h / CSI ? … l).  We swallow any mouse-
+      //  related mode parameter (9, 1000–1007, 1015) before xterm.js
+      //  can act on it.  Non-mouse modes pass through untouched.
+      // ---------------------------------------------------------------
+      if (term._core && term._core._inputHandler) {
+        const _setMode = term._core._inputHandler.setMode.bind(term._core._inputHandler);
+        term._core._inputHandler.setMode = function(params) {
+          const filtered = params.filter(p => p !== 9 && (p < 1000 || p > 1007) && p !== 1015);
+          if (filtered.length > 0) _setMode(filtered);
+        };
+        const _resetMode = term._core._inputHandler.resetMode.bind(term._core._inputHandler);
+        term._core._inputHandler.resetMode = function(params) {
+          const filtered = params.filter(p => p !== 9 && (p < 1000 || p > 1007) && p !== 1015);
+          if (filtered.length > 0) _resetMode(filtered);
+        };
+      }
       // ---------------------------------------------------------------
       //  Keyboard shortcut handler (runs before xterm.js sees the key)
       // ---------------------------------------------------------------
@@ -3066,7 +3100,8 @@ function superCliTerminal() {
     },
 
     // Load scrollback history.  Mouse-tracking DECSET sequences are
-    // stripped at the regex level so xterm.js stays in normal scroll mode.
+    // stripped via the same _filterMouseSequences helper so xterm.js
+    // stays in normal scroll mode (handles compound sequences too).
     async primeTerminalScrollback(term, w, expectedKey) {
       try {
         const url = new URL(this.terminalUrl(w, 'terminal'), window.location.href);
@@ -3076,7 +3111,8 @@ function superCliTerminal() {
         if (!r.ok || !d.ok || this.windowKey(this.terminalWindow) !== expectedKey || this.terminal !== term) return;
         const output = String(d.output || '');
         if (output) {
-          const clean = output.replace(/\x1b\[\?(?:9[hl]|100[0-7][hl]|1015[hl])/g, '');
+          const _filter = this._filterMouseSequences || ((s) => s);
+          const clean = _filter(output);
           await new Promise(resolve => term.write(clean.replace(/\r?\n/g, '\r\n'), resolve));
           term.scrollToBottom();
         }
