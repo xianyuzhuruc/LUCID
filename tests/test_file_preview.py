@@ -84,6 +84,34 @@ class FilePreviewTest(unittest.TestCase):
         self.assertIn("scheduleTerminalReconnectOnResize()", html)
         self.assertIn("this.reconnectTerminal();", html)
 
+    def test_frontend_all_node_sync_includes_local_agent(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("get syncableDeployNodes()", html)
+        self.assertIn("n.kind === 'ssh' || this.isLocalNode(n)", html)
+        self.assertIn(":disabled=\"syncingNodes || !syncableDeployNodes.length\"", html)
+
+    def test_backend_all_node_sync_starts_local_agent_job(self) -> None:
+        local = nodes.NodeConfig(id="local", kind="agent", name="local", url="http://127.0.0.1:12345")
+        ssh = nodes.NodeConfig(id="remote", kind="ssh", host="example", user="user")
+        manual_agent = nodes.NodeConfig(id="manual", kind="agent", url="http://127.0.0.1:23456")
+        cfg = nodes.HubConfig(nodes=(local, ssh, manual_agent))
+
+        with mock.patch.object(app.nodes, "load_config", return_value=cfg), \
+                mock.patch.object(app, "_start_local_deploy_job", return_value={"ok": True, "job_id": "local-job"}) as local_job, \
+                mock.patch.object(app, "_deploy_request_from_node", return_value=mock.sentinel.req) as deploy_req, \
+                mock.patch.object(app, "_start_deploy_job", return_value={"ok": True, "job_id": "ssh-job"}) as ssh_job:
+            result = app.api_node_deploy_sync_all()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([job["job_id"] for job in result["jobs"]], ["local-job", "ssh-job"])
+        self.assertEqual(result["jobs"][0]["node_id"], "local")
+        self.assertEqual(result["jobs"][1]["node_id"], "remote")
+        self.assertEqual(result["skipped"], [{"id": "manual", "reason": "not an SSH node"}])
+        local_job.assert_called_once_with()
+        deploy_req.assert_called_once_with(ssh)
+        ssh_job.assert_called_once_with(mock.sentinel.req)
+
 
 if __name__ == "__main__":
     unittest.main()

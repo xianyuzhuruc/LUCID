@@ -232,7 +232,7 @@
       </div>
       <div class="flex items-center gap-2">
         <button @click="syncAllNodes()"
-                :disabled="syncingNodes || !nodes.some(n => n.kind === 'ssh')"
+                :disabled="syncingNodes || !syncableDeployNodes.length"
                 class="text-xs border border-blue-300 bg-white dark:bg-gray-700 text-blue-700 dark:text-blue-400 px-3 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-50">
           <span x-text="syncingNodes ? 'Syncing...' : 'Sync all nodes'"></span>
         </button>
@@ -1740,6 +1740,10 @@ function superCliTerminal() {
     get skillNodes() {
       // All syncable nodes: remote SSH + local agent
       return this.nodes.filter(n => n.kind === 'ssh' || n.kind === 'agent');
+    },
+
+    get syncableDeployNodes() {
+      return this.nodes.filter(n => n.kind === 'ssh' || this.isLocalNode(n));
     },
 
     get filteredHubSkills() {
@@ -3812,7 +3816,7 @@ function superCliTerminal() {
         }
         this.syncJobs = d.jobs || [];
         this.syncSkipped = d.skipped || [];
-        this.toast(this.syncJobs.length ? 'Started node sync for ' + this.syncJobs.length + ' nodes' : 'No SSH nodes to sync');
+        this.toast(this.syncJobs.length ? 'Started node sync for ' + this.syncJobs.length + ' nodes' : 'No syncable nodes');
         await this.pollSyncJobs();
       } catch (e) {
         this.toast('Sync failed: ' + String(e.message || e));

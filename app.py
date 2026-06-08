@@ -686,6 +686,20 @@ def _deploy_local_agent() -> dict:
     }
 
 
+def _local_agent_node_from_install(install: dict) -> nodes.NodeConfig:
+    return nodes.NodeConfig(
+        id="local",
+        kind="agent",
+        name="local",
+        url=str(install["url"]),
+        agent_host="127.0.0.1",
+        agent_port=int(install["agent_port"]),
+        auto_tunnel=False,
+        auto_deploy=True,
+        remote_dir=str(install["remote_dir"]),
+    )
+
+
 def _pick_local_agent_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -1307,17 +1321,7 @@ def api_node_local_enable() -> dict:
     if not _is_hub_mode():
         raise HTTPException(400, "local node can only be enabled from hub mode")
     install = _deploy_local_agent()
-    node = nodes.NodeConfig(
-        id="local",
-        kind="agent",
-        name="local",
-        url=str(install["url"]),
-        agent_host="127.0.0.1",
-        agent_port=int(install["agent_port"]),
-        auto_tunnel=False,
-        auto_deploy=True,
-        remote_dir=str(install["remote_dir"]),
-    )
+    node = _local_agent_node_from_install(install)
     nodes.write_node_config(node)
     nodes.invalidate_snapshot_cache(node.id)
     return {
@@ -1574,6 +1578,24 @@ def _run_deploy_job(job_id: str, req: DeployRequest) -> None:
         _fail_deploy_job(job_id, f"{type(exc).__name__}: {exc}")
 
 
+def _run_local_deploy_job(job_id: str) -> None:
+    try:
+        _set_deploy_job_progress(job_id, "running", "prepare_local", "Copying current checkout to local agent")
+        install = _deploy_local_agent()
+        node = _local_agent_node_from_install(install)
+        nodes.write_node_config(node)
+        result = {
+            "ok": True,
+            "node_id": node.id,
+            "node": _public_node(node),
+            "install": install,
+            "config_path": str(nodes.CONFIG_PATH),
+        }
+        _finish_deploy_job(job_id, result)
+    except Exception as exc:
+        _fail_deploy_job(job_id, f"{type(exc).__name__}: {exc}")
+
+
 def _start_deploy_job(req: DeployRequest) -> dict:
     job_id = uuid.uuid4().hex
     now = time.time()
@@ -1589,6 +1611,25 @@ def _start_deploy_job(req: DeployRequest) -> dict:
     )
     _store_deploy_job(job)
     thread = threading.Thread(target=_run_deploy_job, args=(job_id, req), daemon=True)
+    thread.start()
+    return _deploy_job_payload(job)
+
+
+def _start_local_deploy_job() -> dict:
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    job = DeployJob(
+        id=job_id,
+        status="queued",
+        step="queued",
+        message="Local agent update queued",
+        next_action=_deploy_next_action("queued"),
+        started_at=now,
+        updated_at=now,
+        events=[{"ts": now, "step": "queued", "message": "Local agent update queued"}],
+    )
+    _store_deploy_job(job)
+    thread = threading.Thread(target=_run_local_deploy_job, args=(job_id,), daemon=True)
     thread.start()
     return _deploy_job_payload(job)
 
@@ -1625,6 +1666,12 @@ def api_node_deploy_sync_all() -> dict:
     jobs: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
     for node in nodes.load_config(force=True).nodes:
+        if _is_local_enabled_node(node):
+            job = _start_local_deploy_job()
+            job["node_id"] = node.id
+            job["node_name"] = node.display_name
+            jobs.append(job)
+            continue
         if node.kind != "ssh":
             skipped.append({"id": node.id, "reason": "not an SSH node"})
             continue
