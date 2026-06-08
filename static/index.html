@@ -3004,8 +3004,20 @@ function superCliTerminal() {
         // Ctrl+Shift+C passes through so xterm.js handles it natively.
         const isCopyShortcut = ctrlOrMeta && key === 'c' && !event.shiftKey;
         if (isCopyShortcut && term.hasSelection()) {
-          event.preventDefault();
-          this.copyTerminalSelection();
+          // Use execCommand('copy') to trigger a trusted browser copy event.
+          // Our terminalCopyHandler (registered on the native 'copy' event)
+          // catches it and transfers xterm.js selection → clipboard via
+          // event.clipboardData.setData, which is the most reliable method
+          // across browsers.  Async Clipboard API writeText can fail silently
+          // when the user-gesture window expires or permissions are restricted.
+          try {
+            document.execCommand('copy');
+          } catch (_) {}
+          // If execCommand didn't activate our copy handler (e.g. it failed
+          // or the browser suppressed it), fall back to the async API.
+          if (term.hasSelection()) {
+            this.copyTerminalSelection();
+          }
           return false;
         }
         return true;
