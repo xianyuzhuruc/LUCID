@@ -3082,16 +3082,34 @@ function superCliTerminal() {
     },
 
     sendTerminalScroll(event) {
-      if (!event || !this.terminalSocket || this.terminalSocket.readyState !== WebSocket.OPEN) return;
+      if (!event) return;
       const delta = event.deltaY || event.deltaX || 0;
       if (!delta) return;
       const lineDeltaMode = typeof WheelEvent !== 'undefined' ? WheelEvent.DOM_DELTA_LINE : 1;
       const unit = event.deltaMode === lineDeltaMode ? 1 : this.terminalLineHeight();
+      const forceTmuxScroll = event.altKey || event.shiftKey;
+      if (!forceTmuxScroll && this.scrollTerminalBuffer(delta, unit, event)) return;
       this.sendTerminalScrollDelta(delta, unit, event);
     },
 
     terminalLineHeight() {
       return this.terminal?._core?._renderService?.dimensions?.css?.cell?.height || 15;
+    },
+
+    scrollTerminalBuffer(delta, unit, event = null) {
+      const term = this.terminal;
+      const buffer = term?.buffer?.active;
+      if (!term || !buffer || !delta) return false;
+      const direction = delta > 0 ? 'down' : 'up';
+      if (direction === 'up' && buffer.viewportY <= 0) return false;
+      if (direction === 'down' && buffer.viewportY >= buffer.baseY) return false;
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      const lines = Math.max(1, Math.min(200, Math.floor(Math.abs(delta) / Math.max(1, unit || this.terminalLineHeight()))));
+      term.scrollLines(direction === 'down' ? lines : -lines);
+      return true;
     },
 
     sendTerminalScrollDelta(delta, unit, event = null) {
@@ -3123,6 +3141,7 @@ function superCliTerminal() {
       const y = event.touches[0].clientY;
       const delta = this.terminalTouchLastY - y;
       this.terminalTouchLastY = y;
+      if (this.scrollTerminalBuffer(delta, this.terminalLineHeight(), event)) return;
       this.sendTerminalScrollDelta(delta, this.terminalLineHeight(), event);
     },
 
