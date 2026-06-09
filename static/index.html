@@ -20,7 +20,7 @@
   .triage-bash { background-color: #64748b; }
   .triage-completed { background-color: #3b82f6; }
   pre { white-space: pre-wrap; word-break: break-all; }
-  .terminal-frame { min-height: 30rem; height: 100%; background: #020617; }
+  .terminal-frame { min-height: 30rem; height: 100%; background: #020617; touch-action: none; }
   .terminal-frame .xterm { height: 100%; padding: 10px; }
   .terminal-frame .xterm-screen { height: 100%; }
   .terminal-frame .xterm-viewport { background-color: #020617 !important; }
@@ -1611,6 +1611,11 @@ function superCliTerminal() {
     terminalDataDisposable: null,
     terminalCopyHandler: null,
     terminalPasteHandler: null,
+    terminalWheelHandler: null,
+    terminalTouchStartHandler: null,
+    terminalTouchMoveHandler: null,
+    terminalTouchEndHandler: null,
+    terminalTouchLastY: null,
     terminalLastPasteData: '',
     terminalLastPasteAt: 0,
     terminalDropActive: false,
@@ -2786,6 +2791,24 @@ function superCliTerminal() {
         this.$refs.terminalOutput.removeEventListener('paste', this.terminalPasteHandler, true);
       }
       this.terminalPasteHandler = null;
+      if (this.terminalWheelHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('wheel', this.terminalWheelHandler, true);
+      }
+      this.terminalWheelHandler = null;
+      if (this.terminalTouchStartHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('touchstart', this.terminalTouchStartHandler, true);
+      }
+      this.terminalTouchStartHandler = null;
+      if (this.terminalTouchMoveHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('touchmove', this.terminalTouchMoveHandler, true);
+      }
+      this.terminalTouchMoveHandler = null;
+      if (this.terminalTouchEndHandler && this.$refs.terminalOutput) {
+        this.$refs.terminalOutput.removeEventListener('touchend', this.terminalTouchEndHandler, true);
+        this.$refs.terminalOutput.removeEventListener('touchcancel', this.terminalTouchEndHandler, true);
+      }
+      this.terminalTouchEndHandler = null;
+      this.terminalTouchLastY = null;
       this.terminalLastPasteData = '';
       this.terminalLastPasteAt = 0;
       if (this.terminal) this.terminal.dispose();
@@ -2937,36 +2960,6 @@ function superCliTerminal() {
       this.terminalLastPasteAt = 0;
       this.fitTerminal();
 
-      // ---------------------------------------------------------------
-      //  Block mouse-tracking at the write level.
-      //
-      //  claude / codex send DECSET sequences to enable mouse reporting
-      //  so they can receive wheel / click events.  If xterm.js enters
-      //  mouse mode it forwards every scroll as an SGR escape sequence
-      //  to the PTY where the app turns it into arrow keys — breaking
-      //  native scrolling entirely.
-      //
-      //  The regex handles BOTH simple single-mode sequences (1000h) AND
-      //  compound multi-mode sequences (1000;1002;1006h) that Claude/Codex
-      //  commonly emit.  It also catches s/r save/restore variants.  Any
-      //  non-mouse modes in a compound sequence are preserved; if every
-      //  mode in the sequence is a mouse mode the entire escape is dropped.
-      //
-      //  Mouse modes filtered: 9 (X10), 1000-1007 (normal/SGR/any-event),
-      //  1015 (urxvt extended).
-      // ---------------------------------------------------------------
-      const _MOUSE_MODE_NUMS = new Set([9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015]);
-      const _MOUSE_DEC_RE = /\x1b\[\?(\d+(?:;\d+)*)[hlsr]/g;
-      const _filterMouse = (s) => {
-        if (!s) return s;
-        return s.replace(_MOUSE_DEC_RE, (_match, params) => {
-          const remaining = params.split(';').filter(p => !_MOUSE_MODE_NUMS.has(parseInt(p, 10)));
-          if (remaining.length === 0) return '';
-          return '\x1b[?' + remaining.join(';') + _match[_match.length - 1];
-        });
-      };
-      this._filterMouseSequences = _filterMouse;  // also used by primeTerminalScrollback
-
       const windowKey = this.windowKey(this.terminalWindow);
 
       // Set up WebSocket and ALL event handlers immediately.
@@ -2982,7 +2975,7 @@ function superCliTerminal() {
       });
       ws.addEventListener('message', (event) => {
         const data = typeof event.data === 'string' ? event.data : '';
-        if (data) term.write(_filterMouse(data));
+        if (data) term.write(data);
       });
       ws.addEventListener('close', () => {
         term.writeln('\r\n\x1b[90m[LUCID] terminal disconnected\x1b[0m');
@@ -2990,34 +2983,7 @@ function superCliTerminal() {
       ws.addEventListener('error', () => {
         term.writeln('\r\n\x1b[31m[LUCID] terminal websocket error\x1b[0m');
       });
-      this.terminalDataDisposable = term.onData(data => {
-        // Drop mouse-event escape sequences so xterm.js never forwards
-        // wheel events to the PTY even if mouse mode leaked in somehow.
-        // \x1b[M  = X10 mouse event    \x1b[< = SGR mouse event
-        if (data.startsWith('\x1b[M') || data.startsWith('\x1b[<')) return;
-        this.sendTerminalData(data);
-      });
-      // ---------------------------------------------------------------
-      //  Defense-in-depth: monkey-patch xterm.js internal mode handlers
-      //  to prevent mouse tracking from EVER being enabled — even if a
-      //  compound DECSET sequence somehow leaks past the _filterMouse
-      //  regex above.  setMode / resetMode process DEC private mode
-      //  sequences (CSI ? … h / CSI ? … l).  We swallow any mouse-
-      //  related mode parameter (9, 1000–1007, 1015) before xterm.js
-      //  can act on it.  Non-mouse modes pass through untouched.
-      // ---------------------------------------------------------------
-      if (term._core && term._core._inputHandler) {
-        const _setMode = term._core._inputHandler.setMode.bind(term._core._inputHandler);
-        term._core._inputHandler.setMode = function(params) {
-          const filtered = params.filter(p => p !== 9 && (p < 1000 || p > 1007) && p !== 1015);
-          if (filtered.length > 0) _setMode(filtered);
-        };
-        const _resetMode = term._core._inputHandler.resetMode.bind(term._core._inputHandler);
-        term._core._inputHandler.resetMode = function(params) {
-          const filtered = params.filter(p => p !== 9 && (p < 1000 || p > 1007) && p !== 1015);
-          if (filtered.length > 0) _resetMode(filtered);
-        };
-      }
+      this.terminalDataDisposable = term.onData(data => this.sendTerminalData(data));
       // ---------------------------------------------------------------
       //  Keyboard shortcut handler (runs before xterm.js sees the key)
       // ---------------------------------------------------------------
@@ -3080,13 +3046,24 @@ function superCliTerminal() {
       };
       el.addEventListener('paste', this.terminalPasteHandler, true);
 
-      // ---------------------------------------------------------------
-      //  Scroll: handled entirely by xterm.js viewport (scrollback: 100000).
-      //  Do NOT intercept wheel/touch events — xterm.js's built-in
-      //  scrollbar and wheel handling is the only scroll mechanism.
-      //  Both local and remote terminals receive the same PTY output
-      //  via WebSocket, so xterm.js scrolls identically everywhere.
-      // ---------------------------------------------------------------
+      this.terminalWheelHandler = (event) => {
+        if (event.ctrlKey) return;
+        if (Math.abs(event.deltaY || 0) < Math.abs(event.deltaX || 0)) return;
+        const rowPixels = 18;
+        const pagePixels = Math.max(1, this.terminal?.rows || 24) * rowPixels;
+        const unit = event.deltaMode === 1 ? rowPixels : event.deltaMode === 2 ? pagePixels : 1;
+        const delta = (event.deltaY || 0) * unit;
+        this.sendTerminalScrollDelta(delta, event);
+      };
+      el.addEventListener('wheel', this.terminalWheelHandler, { capture: true, passive: false });
+
+      this.terminalTouchStartHandler = (event) => this.startTerminalTouchScroll(event);
+      this.terminalTouchMoveHandler = (event) => this.moveTerminalTouchScroll(event);
+      this.terminalTouchEndHandler = () => { this.terminalTouchLastY = null; };
+      el.addEventListener('touchstart', this.terminalTouchStartHandler, { capture: true, passive: false });
+      el.addEventListener('touchmove', this.terminalTouchMoveHandler, { capture: true, passive: false });
+      el.addEventListener('touchend', this.terminalTouchEndHandler, true);
+      el.addEventListener('touchcancel', this.terminalTouchEndHandler, true);
 
       this.terminalResizeObserver = new ResizeObserver(() => {
         this.fitTerminal();
@@ -3099,9 +3076,7 @@ function superCliTerminal() {
       this.primeTerminalScrollback(term, this.terminalWindow, windowKey);
     },
 
-    // Load scrollback history.  Mouse-tracking DECSET sequences are
-    // stripped via the same _filterMouseSequences helper so xterm.js
-    // stays in normal scroll mode (handles compound sequences too).
+    // Load scrollback history while the live WebSocket is already running.
     async primeTerminalScrollback(term, w, expectedKey) {
       try {
         const url = new URL(this.terminalUrl(w, 'terminal'), window.location.href);
@@ -3111,12 +3086,43 @@ function superCliTerminal() {
         if (!r.ok || !d.ok || this.windowKey(this.terminalWindow) !== expectedKey || this.terminal !== term) return;
         const output = String(d.output || '');
         if (output) {
-          const _filter = this._filterMouseSequences || ((s) => s);
-          const clean = _filter(output);
-          await new Promise(resolve => term.write(clean.replace(/\r?\n/g, '\r\n'), resolve));
+          await new Promise(resolve => term.write(output.replace(/\r?\n/g, '\r\n'), resolve));
           term.scrollToBottom();
         }
       } catch (_) {}
+    },
+
+    sendTerminalScrollDelta(delta, event = null) {
+      const amount = Math.abs(Number(delta) || 0);
+      if (amount < 1 || this.terminalSocket?.readyState !== WebSocket.OPEN) return false;
+      const rowPixels = 18;
+      const rows = Math.max(5, this.terminal?.rows || 24);
+      const lines = Math.max(1, Math.min(rows, Math.ceil(amount / rowPixels)));
+      this.terminalSocket.send(JSON.stringify({
+        type: 'scroll',
+        direction: delta < 0 ? 'up' : 'down',
+        lines,
+      }));
+      if (event) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+      return true;
+    },
+
+    startTerminalTouchScroll(event) {
+      if (!event.touches || event.touches.length !== 1) return;
+      this.terminalTouchLastY = event.touches[0].clientY;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    },
+
+    moveTerminalTouchScroll(event) {
+      if (!event.touches || event.touches.length !== 1 || this.terminalTouchLastY === null) return;
+      const y = event.touches[0].clientY;
+      const delta = this.terminalTouchLastY - y;
+      this.terminalTouchLastY = y;
+      this.sendTerminalScrollDelta(delta, event);
     },
 
     fitTerminal() {
