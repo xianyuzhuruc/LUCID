@@ -19,6 +19,7 @@ test*/
 *.log
 .lucid-pid
 run.log
+
 # generated demo data + public mirror clone
 fixtures/demo-home/
 .public-mirror/
