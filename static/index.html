@@ -2958,6 +2958,14 @@ function superCliTerminal() {
       this.terminalFitAddon = fitAddon;
       this.terminalLastPasteData = '';
       this.terminalLastPasteAt = 0;
+      // Track application mouse-tracking mode (e.g. Claude's full-screen UI).
+      // We strip the enable sequences before xterm sees them so drag-to-select
+      // always makes a LOCAL selection (→ clipboard) instead of being captured
+      // by the app, and remember the state here so the wheel handler can
+      // forward scroll-wheel reports to the app instead of tmux copy-mode.
+      this.terminalAppMouseMode = false;
+      this._termMouseModesOn = new Set();
+      this._termFilterResidual = '';
       this.fitTerminal();
 
       const windowKey = this.windowKey(this.terminalWindow);
@@ -2975,7 +2983,8 @@ function superCliTerminal() {
       });
       ws.addEventListener('message', (event) => {
         const data = typeof event.data === 'string' ? event.data : '';
-        if (data) term.write(data);
+        if (!data) return;
+        term.write(this.filterTerminalMouseModes(data));
       });
       ws.addEventListener('close', () => {
         term.writeln('\r\n\x1b[90m[LUCID] terminal disconnected\x1b[0m');
@@ -3049,6 +3058,14 @@ function superCliTerminal() {
       this.terminalWheelHandler = (event) => {
         if (event.ctrlKey) return;
         if (Math.abs(event.deltaY || 0) < Math.abs(event.deltaX || 0)) return;
+        // Full-screen apps that requested mouse tracking (e.g. Claude) own the
+        // scroll wheel: forward synthesized SGR wheel reports so they scroll
+        // their own buffer.  Normal-screen apps (bash/codex) get tmux
+        // scrollback history via the backend copy-mode path.
+        if (this.terminalAppMouseMode) {
+          this.sendTerminalWheel(event);
+          return;
+        }
         const rowPixels = 18;
         const pagePixels = Math.max(1, this.terminal?.rows || 24) * rowPixels;
         const unit = event.deltaMode === 1 ? rowPixels : event.deltaMode === 2 ? pagePixels : 1;
@@ -3108,6 +3125,77 @@ function superCliTerminal() {
         event.stopImmediatePropagation();
       }
       return true;
+    },
+
+    // Strip application mouse-tracking toggles from the PTY stream so the
+    // browser terminal never enters app-mouse mode.  Without this, an app like
+    // Claude that enables mouse tracking captures drag-to-select (copy goes to
+    // the tmux buffer instead of the clipboard) and steals the wheel.  We
+    // remember whether the app asked for the mouse in `terminalAppMouseMode`
+    // so the wheel handler can still forward scrolling to it.
+    filterTerminalMouseModes(data) {
+      const MOUSE_MODES = new Set(['1000', '1001', '1002', '1003', '1005', '1006', '1015', '1016']);
+      const TRACK_MODES = new Set(['1000', '1002', '1003']);
+      let s = (this._termFilterResidual || '') + data;
+      this._termFilterResidual = '';
+      // Hold back a trailing, not-yet-terminated escape so a mode sequence is
+      // never split across two chunks (and silently slips through).
+      const partial = s.match(/\x1b(?:\[[?0-9;]*)?$/);
+      if (partial) {
+        this._termFilterResidual = partial[0];
+        s = s.slice(0, s.length - partial[0].length);
+      }
+      if (s.indexOf('\x1b[?') === -1) return s;
+      return s.replace(/\x1b\[\?([0-9;]+)([hl])/g, (whole, params, action) => {
+        const modes = params.split(';');
+        const mouse = modes.filter(p => MOUSE_MODES.has(p));
+        if (!mouse.length) return whole;
+        const on = action === 'h';
+        for (const p of mouse) {
+          if (!TRACK_MODES.has(p)) continue;
+          if (on) this._termMouseModesOn.add(p);
+          else this._termMouseModesOn.delete(p);
+        }
+        this.terminalAppMouseMode = this._termMouseModesOn.size > 0;
+        // Drop the mouse modes but preserve any unrelated modes in the same
+        // sequence (e.g. "\x1b[?1003;1006h" vs a combined private-mode set).
+        const keep = modes.filter(p => !MOUSE_MODES.has(p));
+        return keep.length ? `\x1b[?${keep.join(';')}${action}` : '';
+      });
+    },
+
+    // Translate a wheel event into SGR mouse wheel reports and send them to the
+    // app (used for full-screen apps that requested mouse tracking).
+    sendTerminalWheel(event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const rows = Math.max(1, this.terminal?.rows || 24);
+      let lines;
+      if (event.deltaMode === 1) lines = Math.abs(event.deltaY || 0);
+      else if (event.deltaMode === 2) lines = Math.abs(event.deltaY || 0) * rows;
+      else lines = Math.abs(event.deltaY || 0) / 18;
+      lines = Math.max(1, Math.min(Math.round(lines) || 1, rows));
+      const button = (event.deltaY || 0) < 0 ? 64 : 65; // 64 = wheel up, 65 = wheel down
+      const { col, row } = this.terminalCellFromEvent(event);
+      let seq = '';
+      for (let i = 0; i < lines; i++) seq += `\x1b[<${button};${col};${row}M`;
+      this.sendTerminalData(seq);
+    },
+
+    // Best-effort pixel→cell mapping for synthesized mouse reports.
+    terminalCellFromEvent(event) {
+      const el = this.$refs.terminalOutput;
+      const cols = Math.max(1, this.terminal?.cols || 80);
+      const rows = Math.max(1, this.terminal?.rows || 24);
+      if (!el) return { col: 1, row: 1 };
+      const rect = el.getBoundingClientRect();
+      const cw = rect.width / cols;
+      const ch = rect.height / rows;
+      let col = cw > 0 ? Math.floor((event.clientX - rect.left) / cw) + 1 : 1;
+      let row = ch > 0 ? Math.floor((event.clientY - rect.top) / ch) + 1 : 1;
+      col = Math.max(1, Math.min(col, cols));
+      row = Math.max(1, Math.min(row, rows));
+      return { col, row };
     },
 
     startTerminalTouchScroll(event) {
