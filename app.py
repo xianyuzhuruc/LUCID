@@ -1359,6 +1359,14 @@ def index() -> HTMLResponse:
     return HTMLResponse(html)
 
 
+@app.get("/favicon.ico")
+def favicon():
+    png_path = STATIC_DIR / "LUCID.png"
+    if png_path.exists():
+        return Response(content=png_path.read_bytes(), media_type="image/png")
+    return Response(status_code=404)
+
+
 @app.get("/api/windows")
 def api_windows() -> dict:
     if not state.last_snapshot["windows"]:
