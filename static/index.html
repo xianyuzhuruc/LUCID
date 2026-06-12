@@ -51,6 +51,20 @@
   .dark .editor-textarea-layer::placeholder {
     color: #6b7280;
   }
+  .editor-tab-scroll {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .editor-tab-scroll::-webkit-scrollbar {
+    height: 6px;
+  }
+  .editor-tab-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 999px;
+  }
+  .dark .editor-tab-scroll::-webkit-scrollbar-thumb {
+    background: #475569;
+  }
 
   /* === Syntax Highlighting Colors === */
   :root {
@@ -789,7 +803,7 @@
        :class="terminalZoom ? 'fixed top-9 left-0 right-0 bottom-0 z-40 bg-white dark:bg-gray-900 p-3 flex flex-col' : 'mt-6 scroll-mt-24 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow border p-5'"
        x-transition>
     <div class="flex items-center justify-between mb-3" :class="terminalZoom ? 'mb-1 gap-2' : ''">
-      <div class="min-w-0 flex items-center gap-2">
+      <div class="min-w-0 flex items-center gap-2" :class="terminalZoom ? 'flex-1 overflow-hidden' : ''">
         <div class="min-w-0">
           <h2 class="font-semibold text-sm truncate">
             <span x-text="terminalWindow?.name || terminalWindow?.project_name || ''"></span>
@@ -798,7 +812,7 @@
           <div class="text-xs text-gray-400 truncate" x-show="!terminalZoom" x-text="'tmux: ' + (terminalWindow?.tmux_session || '')"></div>
         </div>
         <!-- tabs inline in zoom mode -->
-        <div x-show="terminalZoom" class="flex items-center gap-1">
+        <div x-show="terminalZoom" class="min-w-0 flex flex-1 items-center gap-1 overflow-hidden">
           <span class="text-gray-300 dark:text-gray-600 mx-1 select-none">|</span>
           <button @click="setTerminalTab('terminal')"
                   class="text-xs border px-2 py-1 rounded shrink-0"
@@ -808,17 +822,29 @@
                   class="text-xs border px-2 py-1 rounded shrink-0"
                   :class="terminalPanelTab === 'editor' ? 'border-slate-400 bg-slate-900 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
             Editor</button>
+          <button x-show="editorTabs.length"
+                  @click="closeAllEditorTabs()"
+                  title="Close all editor tabs"
+                  class="text-xs border border-red-200 px-2 py-1 rounded shrink-0 bg-white text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-gray-700 dark:text-red-400 dark:hover:bg-red-900/30">
+            Close all</button>
           <!-- File sub-tabs -->
-          <template x-for="(tab, idx) in editorTabs" :key="tab.path">
-            <div class="text-xs border px-2 py-1 rounded shrink-0 flex items-center gap-1"
-                 :class="terminalPanelTab === 'editor' && activeEditorTab === idx
-                   ? 'border-slate-400 bg-slate-900 text-white'
-                   : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
-              <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="tabFileBase(tab.path)"></button>
-              <span x-show="tab.dirty" class="text-amber-300 shrink-0">*</span>
-              <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
+          <div x-show="editorTabs.length"
+               data-editor-tab-scroll
+               class="editor-tab-scroll min-w-0 flex-1 overflow-x-auto rounded border border-gray-200 bg-white/80 dark:border-gray-700 dark:bg-gray-800/80">
+            <div class="flex w-max items-center gap-1 px-1 py-0.5">
+              <template x-for="(tab, idx) in editorTabs" :key="tab.path">
+                <div class="text-xs border px-2 py-1 rounded shrink-0 flex items-center gap-1"
+                     :data-editor-tab-index="idx"
+                     :class="terminalPanelTab === 'editor' && activeEditorTab === idx
+                       ? 'border-slate-400 bg-slate-900 text-white'
+                       : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
+                  <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="tabFileBase(tab.path)"></button>
+                  <span x-show="tab.dirty" class="text-amber-300 shrink-0">*</span>
+                  <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
+                </div>
+              </template>
             </div>
-          </template>
+          </div>
         </div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
@@ -846,7 +872,7 @@
         <button @click="closeTerminal()" class="text-gray-400 hover:text-gray-700 text-lg">&times;</button>
       </div>
     </div>
-    <div x-show="!terminalZoom" class="mb-3 flex items-center gap-0.5 border-b border-gray-200 dark:border-gray-700">
+    <div x-show="!terminalZoom" class="mb-3 flex items-end gap-0.5 overflow-hidden border-b border-gray-200 dark:border-gray-700">
       <button @click="setTerminalTab('terminal')"
               class="border-x border-t px-3 py-1.5 text-xs shrink-0"
               :class="terminalPanelTab === 'terminal' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
@@ -855,17 +881,29 @@
               class="border-x border-t px-3 py-1.5 text-xs shrink-0"
               :class="terminalPanelTab === 'editor' ? 'rounded-t bg-slate-900 text-white border-slate-900' : 'rounded-t bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
         Editor</button>
+      <button x-show="editorTabs.length"
+              @click="closeAllEditorTabs()"
+              title="Close all editor tabs"
+              class="border-x border-t px-2 py-1.5 text-xs shrink-0 rounded-t bg-white text-red-600 border-red-200 hover:bg-red-50 dark:bg-gray-800 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/30">
+        Close all</button>
       <!-- File sub-tabs -->
-      <template x-for="(tab, idx) in editorTabs" :key="tab.path">
-        <div class="border-x border-t px-2 py-1.5 text-xs shrink-0 flex items-center gap-1 rounded-t"
-             :class="terminalPanelTab === 'editor' && activeEditorTab === idx
-               ? 'bg-slate-900 text-white border-slate-900'
-               : 'bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
-          <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="tabFileBase(tab.path)"></button>
-          <span x-show="tab.dirty" class="text-amber-300 shrink-0">*</span>
-          <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
+      <div x-show="editorTabs.length"
+           data-editor-tab-scroll
+           class="editor-tab-scroll min-w-0 flex-1 overflow-x-auto rounded-t border-x border-t border-gray-200 bg-gray-50 px-0.5 pt-0.5 dark:border-gray-700 dark:bg-gray-900/40">
+        <div class="flex w-max items-center gap-0.5">
+          <template x-for="(tab, idx) in editorTabs" :key="tab.path">
+            <div class="border-x border-t px-2 py-1.5 text-xs shrink-0 flex items-center gap-1 rounded-t"
+                 :data-editor-tab-index="idx"
+                 :class="terminalPanelTab === 'editor' && activeEditorTab === idx
+                   ? 'bg-slate-900 text-white border-slate-900'
+                   : 'bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
+              <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="tabFileBase(tab.path)"></button>
+              <span x-show="tab.dirty" class="text-amber-300 shrink-0">*</span>
+              <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
+            </div>
+          </template>
         </div>
-      </template>
+      </div>
     </div>
     <!-- sidebar + content area -->
     <div class="flex gap-0"
@@ -912,6 +950,7 @@
             New Dir</button>
           <input x-ref="terminalUploadInput"
                  type="file"
+                 multiple
                  class="hidden"
                  @change="uploadTerminalFile($event)">
         </div>
@@ -1016,8 +1055,9 @@
               <span x-show="editor.dirty && !editor.saving && !editor.deleting" class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">modified</span>
               <span x-show="editor.type === 'image'" class="text-[10px] text-purple-600 dark:text-purple-400 font-medium">🖼 Image</span>
               <span x-show="editor.type === 'pdf'" class="text-[10px] text-red-600 dark:text-red-400 font-medium">📄 PDF</span>
+              <span x-show="editor.type === 'unsupported'" class="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Unsupported</span>
               <button @click="deleteEditorFile()"
-                      :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
+                      :disabled="!editor.path || editor.type === 'unsupported' || editor.loading || editor.saving || editor.deleting"
                       class="rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
                       x-text="editor.deleting ? 'Deleting...' : 'Delete'"></button>
               <button @click="openRawEditorFile()"
@@ -1025,14 +1065,14 @@
                       :disabled="!editor.rawUrl"
                       class="rounded border border-slate-200 bg-white dark:bg-gray-700 px-2 py-1 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-gray-600 disabled:opacity-40">Open</button>
               <button @click="saveEditorFile()"
-                      x-show="editor.type !== 'image' && editor.type !== 'pdf'"
+                      x-show="editor.type === 'text'"
                       :disabled="!editor.path || editor.loading || editor.saving || editor.deleting"
                       class="rounded border border-blue-200 bg-white dark:bg-gray-700 px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40">Save</button>
             </div>
             <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
 
             <!-- Text editor -->
-            <div x-show="editor.type !== 'image' && editor.type !== 'pdf'" class="relative flex-1 min-h-0 bg-white dark:bg-gray-800" x-ref="editorViewport">
+            <div x-show="editor.type === 'text'" class="relative flex-1 min-h-0 bg-white dark:bg-gray-800" x-ref="editorViewport">
               <!-- Syntax highlight overlay (behind) -->
               <pre class="editor-highlight-layer absolute inset-0 overflow-auto p-3 font-mono text-xs leading-5"
                    aria-hidden="true"><code x-ref="editorHighlight" class="block min-h-full"></code></pre>
@@ -1060,13 +1100,13 @@
                         background-position: 0 0, 10px 10px;">
               <img :src="editor.type === 'image' ? editor.rawUrl : ''" class="max-w-full max-h-full object-contain shadow-lg rounded"
                    alt="image preview"
-                   @error="editor.error = 'Failed to load image'">
+                   @error="if (editor.type === 'image' && editor.rawUrl && $event.target.getAttribute('src') === editor.rawUrl) editor.error = 'Failed to load image'">
             </div>
 
             <!-- PDF viewer -->
             <div x-show="editor.type === 'pdf'" class="flex-1 min-h-0">
               <iframe :src="editor.type === 'pdf' ? editor.rawUrl : ''" class="w-full h-full border-0"
-                      @error="editor.error = 'Failed to load PDF'"></iframe>
+                      @error="if (editor.type === 'pdf' && editor.rawUrl && $event.target.getAttribute('src') === editor.rawUrl) editor.error = 'Failed to load PDF'"></iframe>
             </div>
         </div>
       </div>
@@ -1348,7 +1388,7 @@
     <span>✏️</span> <span>Rename</span></button>
   <button @click="contextMenuDelete()"
           class="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2">
-    <span>🗑</span> <span>Delete</span></button>
+    <span>🗑</span> <span x-text="contextMenuDeleteLabel()"></span></button>
 </div>
 
 <!-- Toast -->
@@ -1549,6 +1589,23 @@ function superCliTerminal() {
     ]},
   };
 
+  const TEXT_EDITOR_UNSUPPORTED_EXTENSIONS = new Set([
+    'doc', 'docx', 'dot', 'dotx', 'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx',
+    'ppt', 'pptx', 'pps', 'ppsx', 'pot', 'potx', 'odt', 'ods', 'odp', 'odg',
+    'rtf', 'pages', 'numbers',
+    'zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'xz', 'txz', 'zst',
+    'br', 'lz', 'lzma', 'apk', 'jar', 'war', 'ear', 'iso', 'dmg',
+    'exe', 'dll', 'so', 'dylib', 'a', 'o', 'obj', 'pyc', 'pyo', 'class', 'wasm',
+    'msi', 'deb', 'rpm', 'appimage',
+    'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'mp4', 'm4v', 'mov', 'avi', 'mkv',
+    'webm', 'wmv',
+    'ttf', 'otf', 'woff', 'woff2', 'eot',
+    'sqlite', 'sqlite3', 'db', 'db3', 'parquet', 'feather', 'arrow', 'avro', 'orc',
+    'h5', 'hdf5', 'pkl', 'pickle', 'joblib', 'npy', 'npz', 'rds', 'sav', 'dta',
+    'psd', 'ai', 'sketch', 'fig', 'blend',
+  ]);
+  const TEXT_EDITOR_ALLOWED_CONTROLS = new Set([9, 10, 12, 13]);
+
   return {
     windows: [],
     counts: { total: 0, busy: 0, waiting: 0, idle: 0, bash: 0, completed: 0 },
@@ -1634,6 +1691,7 @@ function superCliTerminal() {
     terminalPanelTab: 'terminal',
     terminalEditorCache: {},
     terminalSelection: [],
+    terminalSelectionAnchorPath: '',
     terminalExplorer: {
       loading: false,
       uploading: false,
@@ -1889,8 +1947,19 @@ function superCliTerminal() {
       return `/api/nodes/${encodeURIComponent(nodeId || 'local')}/files/raw${query}`;
     },
 
+    pathFileName(path) {
+      const parts = String(path || '').split(/[\\/]/);
+      return parts[parts.length - 1] || '';
+    },
+
+    pathExtension(path) {
+      const name = this.pathFileName(path).toLowerCase();
+      const dot = name.lastIndexOf('.');
+      return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1) : '';
+    },
+
     isImageFile(path) {
-      const ext = (path || '').toLowerCase().split('.').pop();
+      const ext = this.pathExtension(path);
       return ['png','jpg','jpeg','gif','svg','webp','bmp','ico','tiff','tif'].includes(ext);
     },
 
@@ -1900,6 +1969,39 @@ function superCliTerminal() {
 
     isViewableFile(path) {
       return this.isImageFile(path) || this.isPDFFile(path);
+    },
+
+    editorFileOpenMode(path) {
+      if (this.isImageFile(path)) return { type: 'image' };
+      if (this.isPDFFile(path)) return { type: 'pdf' };
+      const ext = this.pathExtension(path);
+      if (ext && TEXT_EDITOR_UNSUPPORTED_EXTENSIONS.has(ext)) {
+        return { type: 'unsupported', message: this.textEditorUnsupportedMessage(path, 'type') };
+      }
+      return { type: 'text' };
+    },
+
+    textEditorUnsupportedMessage(path, reason = 'type') {
+      const name = this.pathFileName(path) || path || 'file';
+      if (reason === 'content') {
+        return 'Text Editor does not support opening this file because it appears to be binary or is not valid UTF-8 text.';
+      }
+      return 'Text Editor does not support opening this file type: ' + name;
+    },
+
+    isEditableTextContent(content) {
+      const text = String(content || '');
+      if (!text) return true;
+      if (text.includes('\u0000')) return false;
+      const sample = text.slice(0, 65536);
+      const replacementCount = (sample.match(/\uFFFD/g) || []).length;
+      if (replacementCount >= 8 || replacementCount / Math.max(sample.length, 1) > 0.01) return false;
+      let controlCount = 0;
+      for (const ch of sample) {
+        const code = ch.charCodeAt(0);
+        if (code < 32 && !TEXT_EDITOR_ALLOWED_CONTROLS.has(code)) controlCount += 1;
+      }
+      return controlCount < 32 && controlCount / Math.max(sample.length, 1) <= 0.02;
     },
 
     nodeFileUploadUrl(nodeId) {
@@ -2129,6 +2231,7 @@ function superCliTerminal() {
       this.terminalExplorer.error = '';
       this.terminalExplorer.uploadError = '';
       this.terminalSelection = [];
+      this.terminalSelectionAnchorPath = '';
       try {
         const r = await fetch(this.nodePathUrl(this.terminalWindow.node_id || 'local', path || ''));
         const d = await r.json();
@@ -2156,13 +2259,21 @@ function superCliTerminal() {
     },
 
     onTerminalEntryClick(event, entry) {
+      if (event.shiftKey && entry.kind !== 'directory' && entry.readable) {
+        this.selectTerminalRange(entry);
+        return;
+      }
       // Ctrl/Cmd-click toggles multi-selection on files (does not open them).
       if ((event.ctrlKey || event.metaKey) && entry.kind !== 'directory' && entry.readable) {
         this.toggleTerminalSelect(entry);
         return;
       }
       // A plain click clears any existing multi-selection, then acts normally.
-      if (this.terminalSelection.length) this.terminalSelection = [];
+      if (this.terminalSelection.length) {
+        this.terminalSelection = [];
+        this.terminalSelectionAnchorPath = '';
+      }
+      this.terminalSelectionAnchorPath = entry.kind !== 'directory' && entry.readable ? entry.path : '';
       return this.selectTerminalPath(entry);
     },
 
@@ -2170,6 +2281,21 @@ function superCliTerminal() {
       const i = this.terminalSelection.indexOf(entry.path);
       if (i >= 0) this.terminalSelection.splice(i, 1);
       else this.terminalSelection.push(entry.path);
+      this.terminalSelectionAnchorPath = entry.path;
+    },
+
+    selectTerminalRange(entry) {
+      const fileEntries = this.terminalExplorer.entries.filter(e => e.kind !== 'directory' && e.readable);
+      if (!fileEntries.length) return;
+      let anchorPath = this.terminalSelectionAnchorPath || this.terminalSelection[this.terminalSelection.length - 1] || entry.path;
+      let anchorIndex = fileEntries.findIndex(e => e.path === anchorPath);
+      const targetIndex = fileEntries.findIndex(e => e.path === entry.path);
+      if (targetIndex < 0) return;
+      if (anchorIndex < 0) anchorIndex = targetIndex;
+      const start = Math.min(anchorIndex, targetIndex);
+      const end = Math.max(anchorIndex, targetIndex);
+      this.terminalSelection = fileEntries.slice(start, end + 1).map(e => e.path);
+      this.terminalSelectionAnchorPath = fileEntries[anchorIndex]?.path || entry.path;
     },
 
     async selectTerminalPath(entry) {
@@ -2200,8 +2326,8 @@ function superCliTerminal() {
 
     async uploadTerminalFile(event) {
       const input = event?.target;
-      const file = input?.files?.[0];
-      if (!file) return;
+      const files = Array.from(input?.files || []);
+      if (!files.length) return;
       if (!this.terminalWindow) {
         input.value = '';
         return;
@@ -2214,6 +2340,24 @@ function superCliTerminal() {
       }
       this.terminalExplorer.uploading = true;
       this.terminalExplorer.uploadError = '';
+      try {
+        const results = [];
+        for (const file of files) {
+          results.push(await this.uploadTerminalSingleFile(directory, file));
+        }
+        await this.loadTerminalPath(directory);
+        this.reportTerminalUploadResults(results);
+      } catch (e) {
+        const message = String(e.message || e);
+        this.terminalExplorer.uploadError = message;
+        this.toast('Upload failed: ' + message);
+      } finally {
+        this.terminalExplorer.uploading = false;
+        input.value = '';
+      }
+    },
+
+    async uploadTerminalSingleFile(directory, file) {
       try {
         const contentBase64 = await this.readFileAsBase64(file);
         const r = await fetch(this.nodeFileUploadUrl(this.terminalWindow.node_id || 'local'), {
@@ -2228,20 +2372,37 @@ function superCliTerminal() {
         const d = await r.json();
         if (!r.ok || d.ok === false) {
           const message = d.detail || d.error || 'File upload failed';
-          this.terminalExplorer.uploadError = message;
-          this.toast('Upload failed: ' + message);
-          return;
+          return { ok: false, name: file.name, error: message };
         }
-        await this.loadTerminalPath(d.directory || directory);
-        this.toast((d.overwritten ? 'Replaced ' : 'Uploaded ') + (d.name || file.name));
+        return {
+          ok: true,
+          name: d.name || file.name,
+          overwritten: !!d.overwritten,
+        };
       } catch (e) {
-        const message = String(e.message || e);
-        this.terminalExplorer.uploadError = message;
-        this.toast('Upload failed: ' + message);
-      } finally {
-        this.terminalExplorer.uploading = false;
-        input.value = '';
+        return { ok: false, name: file.name, error: String(e.message || e) };
       }
+    },
+
+    reportTerminalUploadResults(results) {
+      const succeeded = results.filter(r => r.ok);
+      const failed = results.filter(r => !r.ok);
+      if (failed.length) {
+        const message = failed.slice(0, 3).map(r => `${r.name}: ${r.error}`).join('; ');
+        this.terminalExplorer.uploadError = failed.length > 3 ? `${message}; ...` : message;
+      }
+      if (results.length === 1) {
+        const only = results[0];
+        this.toast(only.ok
+          ? ((only.overwritten ? 'Replaced ' : 'Uploaded ') + only.name)
+          : ('Upload failed: ' + only.error));
+        return;
+      }
+      const replaced = succeeded.filter(r => r.overwritten).length;
+      const parts = [`Uploaded ${succeeded.length}/${results.length} files`];
+      if (replaced) parts.push(`${replaced} replaced`);
+      if (failed.length) parts.push(`${failed.length} failed`);
+      this.toast(parts.join(', '));
     },
 
     async createNewDir() {
@@ -2366,21 +2527,22 @@ function superCliTerminal() {
       this.contextMenu.show = true;
     },
 
+    contextMenuSelectionTargets(entry) {
+      if (!entry) return [];
+      if (this.terminalSelection.includes(entry.path) && this.terminalSelection.length > 1) {
+        const byPath = new Map(this.terminalExplorer.entries.map(e => [e.path, e]));
+        return this.terminalSelection.map(p => byPath.get(p)).filter(Boolean);
+      }
+      return [entry];
+    },
+
     async contextMenuDownload() {
       const entry = this.contextMenu.entry;
       this.contextMenu.show = false;
       if (!entry) return;
       const nodeId = this.terminalWindow?.node_id || 'local';
       // If the right-clicked file is part of a multi-selection, download the whole set.
-      let targets;
-      if (this.terminalSelection.includes(entry.path) && this.terminalSelection.length > 1) {
-        const byPath = new Map(this.terminalExplorer.entries.map(e => [e.path, e]));
-        targets = this.terminalSelection
-          .map(p => byPath.get(p))
-          .filter(e => e && e.kind !== 'directory');
-      } else {
-        targets = entry.kind === 'directory' ? [] : [entry];
-      }
+      const targets = this.contextMenuSelectionTargets(entry).filter(e => e.kind !== 'directory');
       if (!targets.length) { this.toast('Cannot download a directory'); return; }
       if (targets.length === 1) await this.downloadSingleFile(nodeId, targets[0]);
       else await this.downloadMultipleFiles(nodeId, targets);
@@ -2447,6 +2609,7 @@ function superCliTerminal() {
           }
           this.toast('Downloaded ' + ok + ' file(s)' + (fail ? ', ' + fail + ' failed' : ''));
           this.terminalSelection = [];
+          this.terminalSelectionAnchorPath = '';
           return;
         }
       }
@@ -2461,6 +2624,7 @@ function superCliTerminal() {
       }
       this.toast('Downloading ' + entries.length + ' files…');
       this.terminalSelection = [];
+      this.terminalSelectionAnchorPath = '';
     },
 
     async contextMenuRename() {
@@ -2487,20 +2651,68 @@ function superCliTerminal() {
     async contextMenuDelete() {
       const entry = this.contextMenu.entry;
       if (!entry) { this.contextMenu.show = false; return; }
-      if (!confirm('Delete ' + entry.name + '?')) { this.contextMenu.show = false; return; }
+      const targets = this.contextMenuSelectionTargets(entry);
+      if (!targets.length) { this.contextMenu.show = false; return; }
+      const label = targets.length === 1 ? targets[0].name : `${targets.length} selected files`;
+      if (!confirm('Delete ' + label + '?')) { this.contextMenu.show = false; return; }
       const nodeId = this.terminalWindow?.node_id || 'local';
+      try {
+        const results = [];
+        for (const target of targets) {
+          results.push(await this.deleteTerminalPath(nodeId, target));
+        }
+        if (this.terminalExplorer.path) await this.loadTerminalPath(this.terminalExplorer.path);
+        else if (this.pathBrowser.path) await this.loadPath(this.pathBrowser.path);
+        if (targets.length > 1) {
+          this.terminalSelection = [];
+          this.terminalSelectionAnchorPath = '';
+        }
+        for (const result of results.filter(r => r.ok)) {
+          try { this.closeDeletedEditorTabs(result.path); } catch (_) {}
+        }
+        this.reportTerminalDeleteResults(results);
+      } catch (e) { this.toast('Delete failed: ' + String(e)); }
+      this.contextMenu.show = false;
+    },
+
+    contextMenuDeleteLabel() {
+      const targets = this.contextMenuSelectionTargets(this.contextMenu.entry);
+      return targets.length > 1 ? `Delete ${targets.length} files` : 'Delete';
+    },
+
+    async deleteTerminalPath(nodeId, entry) {
       try {
         const r = await fetch(this.nodeFileUrl(nodeId, entry.path), { method: 'DELETE' });
         const d = await r.json();
-        if (!r.ok || !d.ok) { this.toast('Delete failed: ' + (d.detail || d.error || '')); return; }
-        this.toast('Deleted ' + entry.name);
-        if (this.terminalExplorer.path) await this.loadTerminalPath(this.terminalExplorer.path);
-        else if (this.pathBrowser.path) await this.loadPath(this.pathBrowser.path);
-        // Close editor tab if deleted file is open
-        const tabIdx = this.editorTabs.findIndex(t => t.path === entry.path);
-        if (tabIdx >= 0) this.closeEditorTab(tabIdx);
-      } catch (e) { this.toast('Delete failed: ' + String(e)); }
-      this.contextMenu.show = false;
+        if (!r.ok || !d.ok) {
+          return { ok: false, name: entry.name, path: entry.path, error: d.detail || d.error || 'delete failed' };
+        }
+        return { ok: true, name: d.name || entry.name, path: d.path || entry.path };
+      } catch (e) {
+        return { ok: false, name: entry.name, path: entry.path, error: String(e) };
+      }
+    },
+
+    reportTerminalDeleteResults(results) {
+      if (results.length === 1) {
+        const only = results[0];
+        this.toast(only.ok ? ('Deleted ' + only.name) : ('Delete failed: ' + only.error));
+        return;
+      }
+      const failed = results.filter(r => !r.ok);
+      const parts = [`Deleted ${results.length - failed.length}/${results.length} files`];
+      if (failed.length) parts.push(`${failed.length} failed`);
+      this.toast(parts.join(', '));
+    },
+
+    closeDeletedEditorTabs(path) {
+      let tabIdx = this.editorTabs.findIndex(t => t.path === path);
+      while (tabIdx >= 0) {
+        this.editorTabs[tabIdx].dirty = false;
+        if (tabIdx === this.activeEditorTab) this.editor.dirty = false;
+        this.closeEditorTab(tabIdx);
+        tabIdx = this.editorTabs.findIndex(t => t.path === path);
+      }
     },
 
     _saveActiveTab() {
@@ -2533,6 +2745,21 @@ function superCliTerminal() {
       } else {
         this.$nextTick(() => this.syncEditorHighlight());
       }
+      this.scrollActiveEditorTabIntoView();
+    },
+
+    scrollActiveEditorTabIntoView() {
+      if (this.activeEditorTab < 0) return;
+      this.$nextTick(() => {
+        const panel = this.$refs.terminalPanel;
+        if (!panel) return;
+        const selector = `[data-editor-tab-index="${this.activeEditorTab}"]`;
+        panel.querySelectorAll('[data-editor-tab-scroll]').forEach(scroller => {
+          if (scroller.offsetParent === null) return;
+          const tab = scroller.querySelector(selector);
+          if (tab) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
+      });
     },
 
     closeEditorTab(idx) {
@@ -2569,6 +2796,26 @@ function superCliTerminal() {
       } else if (idx < this.activeEditorTab) {
         this.activeEditorTab--;
       }
+    },
+
+    closeAllEditorTabs() {
+      if (!this.editorTabs.length) return;
+      this._saveActiveTab();
+      const dirtyTabs = this.editorTabs.filter(tab => tab.dirty && tab.type !== 'image' && tab.type !== 'pdf');
+      if (dirtyTabs.length) {
+        const label = dirtyTabs.length === 1
+          ? this.tabFileBase(dirtyTabs[0].path)
+          : `${dirtyTabs.length} modified files`;
+        if (!confirm('Discard unsaved changes to ' + label + ' and close all editor tabs?')) return;
+      }
+      if (this._highlightTimeout) clearTimeout(this._highlightTimeout);
+      this._highlightTimeout = null;
+      this.editorTabs = [];
+      this.activeEditorTab = -1;
+      this.editor = this.blankEditorState();
+      this.terminalPanelTab = 'editor';
+      const codeEl = this.$refs.editorHighlight;
+      if (codeEl) codeEl.innerHTML = '';
     },
 
     blankEditorState(overrides = {}) {
@@ -2624,7 +2871,7 @@ function superCliTerminal() {
         ...this.terminalEditorCache,
         [key]: {
           terminalPanelTab: this.terminalPanelTab === 'editor' ? 'editor' : 'terminal',
-          editor: this.sanitizeEditorState(this.editor),
+          editor: this.editor.type === 'unsupported' ? this.blankEditorState() : this.sanitizeEditorState(this.editor),
           editorTabs,
           activeEditorTab,
         },
@@ -2655,6 +2902,7 @@ function superCliTerminal() {
       } else {
         this.$nextTick(() => this.syncEditorHighlight());
       }
+      this.scrollActiveEditorTabIntoView();
       return true;
     },
 
@@ -2676,10 +2924,29 @@ function superCliTerminal() {
       if (codeEl) codeEl.innerHTML = '';
     },
 
+    showUnsupportedEditorFile(path, message) {
+      this._saveActiveTab();
+      this.terminalPanelTab = 'editor';
+      this.activeEditorTab = -1;
+      this.editor = this.blankEditorState({
+        path,
+        type: 'unsupported',
+        error: message || this.textEditorUnsupportedMessage(path),
+      });
+      const codeEl = this.$refs.editorHighlight;
+      if (codeEl) codeEl.innerHTML = '';
+      this.toast(this.editor.error);
+    },
+
     async openEditorFile(path) {
       if (!this.terminalWindow || !path) return;
+      const mode = this.editorFileOpenMode(path);
+      if (mode.type === 'unsupported') {
+        this.showUnsupportedEditorFile(path, mode.message);
+        return;
+      }
       // If already open, just switch to its tab
-      const existingIdx = this.editorTabs.findIndex(t => t.path === path);
+      const existingIdx = this.editorTabs.findIndex(t => t.path === path && t.type === mode.type);
       if (existingIdx >= 0) {
         this.terminalPanelTab = 'editor';
         this.switchEditorTab(existingIdx);
@@ -2689,17 +2956,15 @@ function superCliTerminal() {
       this.terminalPanelTab = 'editor';
 
       const nodeId = this.terminalWindow.node_id || 'local';
-      const isImage = this.isImageFile(path);
-      const isPDF = this.isPDFFile(path);
 
       // Image / PDF: open as a viewer tab (no text content fetch needed)
-      if (isImage || isPDF) {
+      if (mode.type === 'image' || mode.type === 'pdf') {
         const filePath = path;
         const rawUrl = this.nodeFileRawUrl(nodeId, filePath);
         const newIdx = this.editorTabs.length;
         this.editorTabs.push({
           path: filePath,
-          type: isImage ? 'image' : 'pdf',
+          type: mode.type,
           rawUrl: rawUrl,
           content: '',
           originalContent: '',
@@ -2707,7 +2972,7 @@ function superCliTerminal() {
         });
         this.activeEditorTab = newIdx;
         this.editor.path = filePath;
-        this.editor.type = isImage ? 'image' : 'pdf';
+        this.editor.type = mode.type;
         this.editor.rawUrl = rawUrl;
         this.editor.content = '';
         this.editor.originalContent = '';
@@ -2716,21 +2981,30 @@ function superCliTerminal() {
         this.editor.error = '';
         const codeEl = this.$refs.editorHighlight;
         if (codeEl) codeEl.innerHTML = '';
+        this.scrollActiveEditorTabIntoView();
         return;
       }
 
       // Text file
-      this.editor.loading = true;
-      this.editor.error = '';
+      this.activeEditorTab = -1;
+      this.editor = this.blankEditorState({ path, type: 'text', loading: true });
       try {
         const r = await fetch(this.nodeFileUrl(nodeId, path));
         const d = await r.json();
         if (!r.ok || d.ok === false) {
-          this.editor.error = d.detail || d.error || 'File read failed';
+          const message = d.detail || d.error || 'File read failed';
+          this.editor.error = r.status === 415 || /not editable text/i.test(message)
+            ? this.textEditorUnsupportedMessage(path, 'content')
+            : message;
+          if (r.status === 415 || /not editable text/i.test(message)) this.toast(this.editor.error);
           return;
         }
         const content = d.content || '';
         const filePath = d.path || path;
+        if (!this.isEditableTextContent(content)) {
+          this.showUnsupportedEditorFile(filePath, this.textEditorUnsupportedMessage(filePath, 'content'));
+          return;
+        }
         // Push new tab and activate it
         const newIdx = this.editorTabs.length;
         this.editorTabs.push({
@@ -2748,6 +3022,7 @@ function superCliTerminal() {
         this.editor.originalContent = content;
         this.editor.dirty = false;
         this.$nextTick(() => this.syncEditorHighlight());
+        this.scrollActiveEditorTabIntoView();
       } catch (e) {
         this.editor.error = String(e);
       } finally {
@@ -2757,6 +3032,7 @@ function superCliTerminal() {
 
     async deleteEditorFile() {
       if (!this.terminalWindow || !this.editor.path || this.editor.loading || this.editor.saving || this.editor.deleting) return;
+      if (this.editor.type === 'unsupported') return;
       const path = this.editor.path;
       if (!confirm('Delete ' + path + '?')) return;
       this.editor.deleting = true;
@@ -2798,7 +3074,7 @@ function superCliTerminal() {
 
     async saveEditorFile() {
       if (!this.terminalWindow || !this.editor.path || this.editor.loading || this.editor.saving || this.editor.deleting) return;
-      if (this.editor.type === 'image' || this.editor.type === 'pdf') return; // viewer tabs are read-only
+      if (this.editor.type !== 'text') return; // viewer/unsupported tabs are read-only
       this.editor.saving = true;
       this.editor.error = '';
       try {

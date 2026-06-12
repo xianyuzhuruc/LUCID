@@ -449,12 +449,65 @@ def _resolve_local_file(raw_path: str) -> Path:
     return path
 
 
+TEXT_READ_SAMPLE_BYTES = 64 * 1024
+TEXT_READ_ALLOWED_CONTROLS = {9, 10, 12, 13}
+
+
+def _looks_like_editable_text(text: str) -> bool:
+    if not text:
+        return True
+    if "\x00" in text:
+        return False
+    sample = text[:TEXT_READ_SAMPLE_BYTES]
+    replacement_count = sample.count("\ufffd")
+    if replacement_count >= 8 or replacement_count / max(len(sample), 1) > 0.01:
+        return False
+    control_count = 0
+    for ch in sample:
+        code = ord(ch)
+        if code < 32 and code not in TEXT_READ_ALLOWED_CONTROLS:
+            control_count += 1
+    return control_count < 32 and control_count / max(len(sample), 1) <= 0.02
+
+
+def _raise_not_editable_text(path: Path) -> None:
+    raise HTTPException(415, f"file is not editable text: {path}")
+
+
+def _read_editable_text(path: Path) -> str:
+    try:
+        with path.open("rb") as f:
+            sample = f.read(TEXT_READ_SAMPLE_BYTES)
+            if b"\x00" in sample:
+                _raise_not_editable_text(path)
+            try:
+                decoded_sample = sample.decode("utf-8")
+            except UnicodeDecodeError:
+                _raise_not_editable_text(path)
+            if not _looks_like_editable_text(decoded_sample):
+                _raise_not_editable_text(path)
+            rest = f.read()
+    except HTTPException:
+        raise
+    except PermissionError as e:
+        raise HTTPException(403, f"file is not readable: {path}") from e
+    except OSError as e:
+        raise HTTPException(400, f"file read failed for {path}: {e}") from e
+    try:
+        text = (sample + rest).decode("utf-8")
+    except UnicodeDecodeError:
+        _raise_not_editable_text(path)
+    if not _looks_like_editable_text(text):
+        _raise_not_editable_text(path)
+    return text
+
+
 def _local_file_read(raw_path: str) -> dict:
     path = _resolve_local_file(raw_path)
     if not os.access(path, os.R_OK):
         raise HTTPException(403, f"file is not readable: {path}")
     try:
-        content = read_utf8(path)
+        content = _read_editable_text(path)
         stat = path.stat()
     except PermissionError as e:
         raise HTTPException(403, f"file is not readable: {path}") from e
