@@ -65,6 +65,10 @@
   .dark .editor-tab-scroll::-webkit-scrollbar-thumb {
     background: #475569;
   }
+  .file-name-tooltip {
+    max-width: min(34rem, calc(100vw - 2rem));
+    overflow-wrap: anywhere;
+  }
 
   /* === Syntax Highlighting Colors === */
   :root {
@@ -988,6 +992,7 @@
           <div x-show="newDirError" class="mt-1 truncate text-[11px] text-red-600" x-text="newDirError"></div>
         </div>
         <div class="overflow-y-auto bg-white dark:bg-gray-800"
+             @scroll="hideFileNameTooltip()"
              :class="terminalZoom ? 'flex-1 h-0' : 'h-96 lg:h-auto lg:flex-1'">
           <div x-show="terminalExplorer.loading" class="px-3 py-4 text-xs text-gray-400">Loading path...</div>
           <div x-show="terminalExplorer.error && !terminalExplorer.loading"
@@ -996,10 +1001,13 @@
           <div x-show="!terminalExplorer.loading && !terminalExplorer.error && terminalExplorer.entries.length === 0"
                class="px-3 py-4 text-xs text-gray-400">No entries</div>
           <template x-for="entry in terminalExplorer.entries" :key="entry.path + ':' + entry.name">
-            <button @click="onTerminalEntryClick($event, entry)"
+            <button @click="hideFileNameTooltip(); onTerminalEntryClick($event, entry)"
                     draggable="true"
-                    @dragstart="startTerminalPathDrag($event, entry)"
-                    @contextmenu.prevent="openContextMenu($event, entry)"
+                    @mouseenter="scheduleFileNameTooltip($event, entry)"
+                    @mousemove="moveFileNameTooltip($event)"
+                    @mouseleave="hideFileNameTooltip()"
+                    @dragstart="hideFileNameTooltip(); startTerminalPathDrag($event, entry)"
+                    @contextmenu.prevent="hideFileNameTooltip(); openContextMenu($event, entry)"
                     @dragover.prevent="handleBrowserDragOver($event, entry)"
                     @dragleave="handleBrowserDragLeave($event, entry)"
                     @drop.prevent="handleBrowserDrop($event, entry)"
@@ -1008,7 +1016,7 @@
               <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
                     :class="fileBadgeClass(entry)"
                     x-text="fileBadgeLabel(entry)"></span>
-              <span class="min-w-0 flex-1 truncate text-gray-800 dark:text-gray-200" x-text="entry.name"></span>
+              <span data-file-name class="min-w-0 flex-1 truncate text-gray-800 dark:text-gray-200" x-text="entry.name"></span>
               <span class="shrink-0 text-[10px] text-gray-400" x-show="entry.error" x-text="entry.error"></span>
             </button>
           </template>
@@ -1391,6 +1399,13 @@
     <span>🗑</span> <span x-text="contextMenuDeleteLabel()"></span></button>
 </div>
 
+<!-- File-name tooltip -->
+<div x-show="fileNameTooltip.show"
+     x-transition.opacity.duration.100ms
+     class="file-name-tooltip fixed z-[120] pointer-events-none rounded border border-gray-200 bg-gray-950 px-2.5 py-1.5 text-xs font-mono leading-5 text-white shadow-lg dark:border-gray-700"
+     :style="'left:' + fileNameTooltip.x + 'px; top:' + fileNameTooltip.y + 'px'"
+     x-text="fileNameTooltip.text"></div>
+
 <!-- Toast -->
 <div class="fixed bottom-4 right-4 z-50 space-y-2">
   <template x-for="t in toasts" :key="t.id">
@@ -1692,6 +1707,7 @@ function superCliTerminal() {
     terminalEditorCache: {},
     terminalSelection: [],
     terminalSelectionAnchorPath: '',
+    fileNameTooltip: { show: false, x: 0, y: 0, text: '', path: '' },
     terminalExplorer: {
       loading: false,
       uploading: false,
@@ -2227,6 +2243,7 @@ function superCliTerminal() {
 
     async loadTerminalPath(path) {
       if (!this.terminalWindow) return;
+      this.hideFileNameTooltip();
       this.terminalExplorer.loading = true;
       this.terminalExplorer.error = '';
       this.terminalExplorer.uploadError = '';
@@ -2520,7 +2537,46 @@ function superCliTerminal() {
       return (path || '').split('/').pop() || path || '';
     },
 
+    fileNameTooltipCoords(event) {
+      const margin = 16;
+      const width = Math.min(544, Math.max(220, (window.innerWidth || 800) - margin * 2));
+      const height = 80;
+      const x = Math.min((event?.clientX || 0) + 12, Math.max(margin, (window.innerWidth || 800) - width - margin));
+      const y = Math.min((event?.clientY || 0) + 16, Math.max(margin, (window.innerHeight || 600) - height - margin));
+      return { x: Math.max(margin, x), y: Math.max(margin, y) };
+    },
+
+    scheduleFileNameTooltip(event, entry) {
+      this.hideFileNameTooltip();
+      if (!entry?.name) return;
+      const nameEl = event?.currentTarget?.querySelector?.('[data-file-name]');
+      const isTruncated = !!nameEl && nameEl.scrollWidth > nameEl.clientWidth + 1;
+      if (!isTruncated && String(entry.name).length <= 28) return;
+      const { x, y } = this.fileNameTooltipCoords(event);
+      this.fileNameTooltip = {
+        show: true,
+        x,
+        y,
+        text: entry.name,
+        path: entry.path || '',
+      };
+    },
+
+    moveFileNameTooltip(event) {
+      if (!this.fileNameTooltip.path) return;
+      const { x, y } = this.fileNameTooltipCoords(event);
+      this.fileNameTooltip.x = x;
+      this.fileNameTooltip.y = y;
+    },
+
+    hideFileNameTooltip() {
+      if (this.fileNameTooltip.show || this.fileNameTooltip.path) {
+        this.fileNameTooltip = { show: false, x: 0, y: 0, text: '', path: '' };
+      }
+    },
+
     openContextMenu(event, entry) {
+      this.hideFileNameTooltip();
       this.contextMenu.entry = entry;
       this.contextMenu.x = event.clientX;
       this.contextMenu.y = event.clientY;
