@@ -957,7 +957,7 @@
           <div x-show="!terminalExplorer.loading && !terminalExplorer.error && terminalExplorer.entries.length === 0"
                class="px-3 py-4 text-xs text-gray-400">No entries</div>
           <template x-for="entry in terminalExplorer.entries" :key="entry.path + ':' + entry.name">
-            <button @click="selectTerminalPath(entry)"
+            <button @click="onTerminalEntryClick($event, entry)"
                     draggable="true"
                     @dragstart="startTerminalPathDrag($event, entry)"
                     @contextmenu.prevent="openContextMenu($event, entry)"
@@ -965,7 +965,7 @@
                     @dragleave="handleBrowserDragLeave($event, entry)"
                     @drop.prevent="handleBrowserDrop($event, entry)"
                     :disabled="!entry.readable"
-                    :class="'group flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-45' + (dragOverDir && dragOverDir.path === entry.path ? ' bg-blue-50 dark:bg-blue-900/20 ring-1 ring-blue-300 dark:ring-blue-600' : '')">
+                    :class="'group flex w-full items-center gap-2 border-b border-gray-100 dark:border-gray-700 px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-45' + (dragOverDir && dragOverDir.path === entry.path ? ' bg-blue-50 dark:bg-blue-900/20 ring-1 ring-blue-300 dark:ring-blue-600' : '') + (terminalSelection.includes(entry.path) ? ' bg-blue-100 dark:bg-blue-900/40' : '')">
               <span class="flex h-5 w-10 shrink-0 items-center justify-center rounded text-[9px] font-semibold"
                     :class="fileBadgeClass(entry)"
                     x-text="fileBadgeLabel(entry)"></span>
@@ -1339,6 +1339,10 @@
      @keydown.escape.window="contextMenu.show = false"
      class="fixed z-[100] bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg shadow-xl py-1 min-w-[9rem] text-xs"
      :style="'left:' + contextMenu.x + 'px; top:' + contextMenu.y + 'px'">
+  <button @click="contextMenuDownload()"
+          x-show="contextMenu.entry && contextMenu.entry.kind !== 'directory'"
+          class="w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-gray-200 flex items-center gap-2">
+    <span>⬇️</span> <span x-text="(contextMenu.entry && terminalSelection.includes(contextMenu.entry.path) && terminalSelection.length > 1) ? ('Download ' + terminalSelection.length + ' files') : 'Download'"></span></button>
   <button @click="contextMenuRename()"
           class="w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-gray-200 flex items-center gap-2">
     <span>✏️</span> <span>Rename</span></button>
@@ -1610,7 +1614,12 @@ function superCliTerminal() {
     terminalSocket: null,
     terminalResizeObserver: null,
     terminalWindowResizeHandler: null,
+    terminalResizeTimer: null,
     terminalResizeReconnectTimer: null,
+    terminalResizePendingReconnect: false,
+    terminalLastResizeSignature: '',
+    terminalLastReconnectResizeSignature: '',
+    terminalResizeReconnectCooldownUntil: 0,
     terminalDataDisposable: null,
     terminalCopyHandler: null,
     terminalPasteHandler: null,
@@ -1624,6 +1633,7 @@ function superCliTerminal() {
     terminalDropActive: false,
     terminalPanelTab: 'terminal',
     terminalEditorCache: {},
+    terminalSelection: [],
     terminalExplorer: {
       loading: false,
       uploading: false,
@@ -1800,7 +1810,7 @@ function superCliTerminal() {
       }
       this._applyHashRoute();
       window.addEventListener('hashchange', () => this._applyHashRoute());
-      this.terminalWindowResizeHandler = () => this.scheduleTerminalReconnectOnResize();
+      this.terminalWindowResizeHandler = () => this.scheduleTerminalFitOnResize(180, { reconnectAfter: true });
       window.addEventListener('resize', this.terminalWindowResizeHandler);
       window.addEventListener('orientationchange', this.terminalWindowResizeHandler);
     },
@@ -2118,6 +2128,7 @@ function superCliTerminal() {
       this.terminalExplorer.loading = true;
       this.terminalExplorer.error = '';
       this.terminalExplorer.uploadError = '';
+      this.terminalSelection = [];
       try {
         const r = await fetch(this.nodePathUrl(this.terminalWindow.node_id || 'local', path || ''));
         const d = await r.json();
@@ -2142,6 +2153,23 @@ function superCliTerminal() {
     async jumpTerminalPath() {
       const path = (this.terminalExplorer.pathInput || '').trim();
       await this.loadTerminalPath(path || this.terminalExplorer.home || '');
+    },
+
+    onTerminalEntryClick(event, entry) {
+      // Ctrl/Cmd-click toggles multi-selection on files (does not open them).
+      if ((event.ctrlKey || event.metaKey) && entry.kind !== 'directory' && entry.readable) {
+        this.toggleTerminalSelect(entry);
+        return;
+      }
+      // A plain click clears any existing multi-selection, then acts normally.
+      if (this.terminalSelection.length) this.terminalSelection = [];
+      return this.selectTerminalPath(entry);
+    },
+
+    toggleTerminalSelect(entry) {
+      const i = this.terminalSelection.indexOf(entry.path);
+      if (i >= 0) this.terminalSelection.splice(i, 1);
+      else this.terminalSelection.push(entry.path);
     },
 
     async selectTerminalPath(entry) {
@@ -2256,6 +2284,7 @@ function superCliTerminal() {
       if (tab === 'terminal') {
         this.$nextTick(() => {
           this.fitTerminal();
+          this.sendTerminalResize({ onlyIfChanged: true });
           this.terminal?.focus();
         });
       }
@@ -2335,6 +2364,103 @@ function superCliTerminal() {
       this.contextMenu.x = event.clientX;
       this.contextMenu.y = event.clientY;
       this.contextMenu.show = true;
+    },
+
+    async contextMenuDownload() {
+      const entry = this.contextMenu.entry;
+      this.contextMenu.show = false;
+      if (!entry) return;
+      const nodeId = this.terminalWindow?.node_id || 'local';
+      // If the right-clicked file is part of a multi-selection, download the whole set.
+      let targets;
+      if (this.terminalSelection.includes(entry.path) && this.terminalSelection.length > 1) {
+        const byPath = new Map(this.terminalExplorer.entries.map(e => [e.path, e]));
+        targets = this.terminalSelection
+          .map(p => byPath.get(p))
+          .filter(e => e && e.kind !== 'directory');
+      } else {
+        targets = entry.kind === 'directory' ? [] : [entry];
+      }
+      if (!targets.length) { this.toast('Cannot download a directory'); return; }
+      if (targets.length === 1) await this.downloadSingleFile(nodeId, targets[0]);
+      else await this.downloadMultipleFiles(nodeId, targets);
+    },
+
+    async downloadSingleFile(nodeId, entry) {
+      const url = this.nodeFileRawUrl(nodeId, entry.path);
+      // Chromium browsers: native picker to choose folder + filename, stream straight to disk.
+      if (window.showSaveFilePicker) {
+        try {
+          const handle = await window.showSaveFilePicker({ suggestedName: entry.name });
+          const resp = await fetch(url);
+          if (!resp.ok) { this.toast('Download failed: ' + resp.status + ' ' + resp.statusText); return; }
+          const writable = await handle.createWritable();
+          if (resp.body) {
+            await resp.body.pipeTo(writable);
+          } else {
+            await writable.write(await resp.blob());
+            await writable.close();
+          }
+          this.toast('Downloaded ' + entry.name);
+          return;
+        } catch (e) {
+          if (e && e.name === 'AbortError') return; // user cancelled the picker
+          // Any other failure: fall through to the anchor-based download below.
+        }
+      }
+      // Fallback (Firefox/Safari/older browsers): browser saves to its download folder.
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = entry.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        this.toast('Downloading ' + entry.name + '…');
+      } catch (e) {
+        this.toast('Download failed: ' + String(e));
+      }
+    },
+
+    async downloadMultipleFiles(nodeId, entries) {
+      // Chromium browsers: pick one destination folder, write every file into it.
+      if (window.showDirectoryPicker) {
+        let dirHandle = null;
+        try {
+          dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        } catch (e) {
+          if (e && e.name === 'AbortError') return; // user cancelled
+          dirHandle = null; // unsupported/blocked → fall through to anchor downloads
+        }
+        if (dirHandle) {
+          let ok = 0, fail = 0;
+          for (const entry of entries) {
+            try {
+              const resp = await fetch(this.nodeFileRawUrl(nodeId, entry.path));
+              if (!resp.ok) { fail++; continue; }
+              const fh = await dirHandle.getFileHandle(entry.name, { create: true });
+              const writable = await fh.createWritable();
+              if (resp.body) await resp.body.pipeTo(writable);
+              else { await writable.write(await resp.blob()); await writable.close(); }
+              ok++;
+            } catch (e) { fail++; }
+          }
+          this.toast('Downloaded ' + ok + ' file(s)' + (fail ? ', ' + fail + ' failed' : ''));
+          this.terminalSelection = [];
+          return;
+        }
+      }
+      // Fallback: trigger a separate browser download for each file.
+      for (const entry of entries) {
+        const a = document.createElement('a');
+        a.href = this.nodeFileRawUrl(nodeId, entry.path);
+        a.download = entry.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      this.toast('Downloading ' + entries.length + ' files…');
+      this.terminalSelection = [];
     },
 
     async contextMenuRename() {
@@ -2779,7 +2905,17 @@ function superCliTerminal() {
       this.terminal?.focus();
     },
 
-    closeTerminalSession() {
+    closeTerminalSession(options = {}) {
+      if (this.terminalResizeTimer) clearTimeout(this.terminalResizeTimer);
+      if (this.terminalResizeReconnectTimer) clearTimeout(this.terminalResizeReconnectTimer);
+      this.terminalResizeTimer = null;
+      this.terminalResizeReconnectTimer = null;
+      this.terminalResizePendingReconnect = false;
+      this.terminalLastResizeSignature = '';
+      if (!options.preserveResizeReconnectState) {
+        this.terminalLastReconnectResizeSignature = '';
+        this.terminalResizeReconnectCooldownUntil = 0;
+      }
       if (this.terminalResizeObserver) this.terminalResizeObserver.disconnect();
       this.terminalResizeObserver = null;
       if (this.terminalSocket) this.terminalSocket.close();
@@ -2885,30 +3021,58 @@ function superCliTerminal() {
 
     async toggleTerminalSidebar() {
       this.terminalSidebarOpen = !this.terminalSidebarOpen;
-      this.$nextTick(() => setTimeout(() => this.reconnectTerminal(), 250));
+      this.$nextTick(() => this.scheduleTerminalFitOnResize(250, { reconnectAfter: true }));
     },
 
     async toggleTerminalZoom() {
       this.terminalZoom = !this.terminalZoom;
       this.zoomStartedAt = this.terminalZoom ? Date.now() : null;
-      this.$nextTick(() => this.reconnectTerminal());
+      this.$nextTick(() => this.scheduleTerminalFitOnResize(80, { reconnectAfter: true }));
     },
 
-    scheduleTerminalReconnectOnResize() {
-      if (!this.terminalWindow) return;
+    scheduleTerminalFitOnResize(delay = 120, options = {}) {
+      if (!this.terminalWindow || !this.terminal) return;
+      this.terminalResizePendingReconnect = this.terminalResizePendingReconnect || !!options.reconnectAfter;
+      if (this.terminalResizeTimer) clearTimeout(this.terminalResizeTimer);
+      this.terminalResizeTimer = setTimeout(() => {
+        this.terminalResizeTimer = null;
+        if (!this.terminalWindow || !this.terminal) return;
+        this.fitTerminal();
+        const signature = this.terminalDimensionSignature();
+        this.sendTerminalResize({ onlyIfChanged: true, signature });
+        const shouldReconnect = this.terminalResizePendingReconnect;
+        this.terminalResizePendingReconnect = false;
+        if (shouldReconnect) this.scheduleTerminalReconnectAfterResize(signature);
+      }, delay);
+    },
+
+    scheduleTerminalReconnectAfterResize(signature, delay = 900) {
+      if (!signature || !this.terminalWindow || !this.terminal) return;
+      if (signature === this.terminalLastReconnectResizeSignature) return;
+      if (Date.now() < this.terminalResizeReconnectCooldownUntil) return;
       if (this.terminalResizeReconnectTimer) clearTimeout(this.terminalResizeReconnectTimer);
       this.terminalResizeReconnectTimer = setTimeout(() => {
         this.terminalResizeReconnectTimer = null;
-        if (this.terminalWindow) this.reconnectTerminal();
-      }, 350);
+        if (!this.terminalWindow || !this.terminal) return;
+        if (Date.now() < this.terminalResizeReconnectCooldownUntil) return;
+        this.fitTerminal();
+        const currentSignature = this.terminalDimensionSignature();
+        if (!currentSignature || currentSignature === this.terminalLastReconnectResizeSignature) return;
+        if (this.terminalSocket?.readyState !== WebSocket.OPEN) return;
+        this.terminalLastReconnectResizeSignature = currentSignature;
+        this.terminalResizeReconnectCooldownUntil = Date.now() + 3000;
+        this.reconnectTerminal({ preserveResizeReconnectState: true });
+      }, delay);
     },
 
-    async reconnectTerminal() {
+    async reconnectTerminal(options = {}) {
       if (!this.terminalWindow) return;
       if (this.terminalWindow.triage === 'completed') {
         await this.startTerminalWindow();
       }
-      this.closeTerminalSession();
+      this.closeTerminalSession({
+        preserveResizeReconnectState: !!options.preserveResizeReconnectState,
+      });
       this.$nextTick(() => this.startTerminalSession());
     },
 
@@ -2926,6 +3090,11 @@ function superCliTerminal() {
         cols: Math.max(20, this.terminal?.cols || 80),
         rows: Math.max(5, this.terminal?.rows || 24),
       };
+    },
+
+    terminalDimensionSignature() {
+      const dims = this.terminalDimensions();
+      return `${dims.cols}x${dims.rows}`;
     },
 
     async startTerminalSession() {
@@ -3086,8 +3255,7 @@ function superCliTerminal() {
       el.addEventListener('touchcancel', this.terminalTouchEndHandler, true);
 
       this.terminalResizeObserver = new ResizeObserver(() => {
-        this.fitTerminal();
-        this.sendTerminalResize();
+        this.scheduleTerminalFitOnResize(50);
       });
       this.terminalResizeObserver.observe(el);
 
@@ -3222,10 +3390,13 @@ function superCliTerminal() {
       } catch (_) {}
     },
 
-    sendTerminalResize() {
+    sendTerminalResize(options = {}) {
       const ws = this.terminalSocket;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const dims = this.terminalDimensions();
+      const signature = options.signature || `${dims.cols}x${dims.rows}`;
+      if (options.onlyIfChanged && signature === this.terminalLastResizeSignature) return;
+      this.terminalLastResizeSignature = signature;
       ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
     },
 
