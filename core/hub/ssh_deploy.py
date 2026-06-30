@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator
 
 import paramiko
@@ -93,6 +93,7 @@ class DeployRequest:
     remote_dir: str = "~/.lucid/agent"
     node_name: str = ""
     python_command: str = "auto"
+    remember_password: bool = True
 
 
 def deploy_agent(req: DeployRequest, progress: DeployProgress | None = None) -> dict:
@@ -141,6 +142,7 @@ def deploy_agent(req: DeployRequest, progress: DeployProgress | None = None) -> 
             remote_dir=req.remote_dir,
             node_name=req.node_name,
             python_command=req.python_command,
+            remember_password=req.remember_password,
         )
         _record_deploy_ssh_history(key_req)
     else:
@@ -162,6 +164,7 @@ def deploy_agent(req: DeployRequest, progress: DeployProgress | None = None) -> 
             remote_dir=req.remote_dir,
             node_name=req.node_name,
             python_command=req.python_command,
+            remember_password=req.remember_password,
         )
     identity_file = _deploy_identity_file(req)
     token = secrets.token_urlsafe(32)
@@ -175,8 +178,7 @@ def deploy_agent(req: DeployRequest, progress: DeployProgress | None = None) -> 
     try:
         _report_progress(progress, "detect_remote", "Detecting remote path and Linux architecture")
         remote_dir = _remote_expand(client, req.remote_dir)
-        if not remote_dir.startswith("/"):
-            raise RuntimeError(f"remote directory did not expand to an absolute path: {remote_dir}")
+        remote_dir = _safe_remote_agent_dir(client, remote_dir)
         remote_platform = _remote_agent_platform(client)
         runtime_bundle = _prepare_agent_runtime_bundle(remote_platform, progress)
         tmp_archive = f"/tmp/lucid-agent-{int(time.time())}.tar.gz"
@@ -364,6 +366,41 @@ def _remote_expand(client: paramiko.SSHClient, path: str) -> str:
         "esac\n"
     )
     return _run(client, cmd).strip()
+
+
+def _safe_remote_agent_dir(client: paramiko.SSHClient, remote_dir: str) -> str:
+    """Return a normalized remote agent dir or raise if it is unsafe to manage."""
+    path = str(PurePosixPath(remote_dir or ""))
+    parts = PurePosixPath(path).parts
+    if not path.startswith("/"):
+        raise RuntimeError(f"remote directory did not expand to an absolute path: {remote_dir}")
+    if ".." in parts:
+        raise RuntimeError(f"refusing to use remote directory with '..': {remote_dir}")
+    home = str(PurePosixPath(_run(client, 'printf "%s\\n" "$HOME"', timeout=10).strip() or "/"))
+    protected = {
+        "/",
+        "/bin",
+        "/boot",
+        "/dev",
+        "/etc",
+        "/home",
+        "/lib",
+        "/lib64",
+        "/opt",
+        "/proc",
+        "/root",
+        "/run",
+        "/sbin",
+        "/sys",
+        "/tmp",
+        "/usr",
+        "/var",
+        home,
+        str(PurePosixPath(home) / ".lucid"),
+    }
+    if path in protected:
+        raise RuntimeError(f"refusing to use unsafe remote agent directory: {path}")
+    return path
 
 
 def _remote_agent_platform(client: paramiko.SSHClient) -> str:
@@ -1019,6 +1056,7 @@ def cleanup_remote_node(node_id: str) -> dict:
     try:
         client.connect(**connect_kwargs)
         remote_dir = _remote_expand(client, node.remote_dir or "~/.lucid/agent")
+        remote_dir = _safe_remote_agent_dir(client, remote_dir)
         # 1) Stop the agent process
         _stop_remote_agent(client, node_id, remote_dir)
         # 2) Remove pidfile, log, and agent directory

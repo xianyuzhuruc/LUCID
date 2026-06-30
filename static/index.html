@@ -298,6 +298,11 @@
           <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="host" x-model="deployForm.host">
           <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" placeholder="user" x-model="deployForm.user">
           <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" placeholder="ssh port" x-model.number="deployForm.ssh_port">
+          <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200"
+                 type="password"
+                 autocomplete="current-password"
+                 placeholder="password (optional, for first-time key setup)"
+                 x-model="deployForm.password">
           <input class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200" type="number" placeholder="agent port: auto" x-model.number="deployForm.agent_port">
           <input class="border dark:border-gray-600 rounded px-2 py-1 col-span-2 dark:bg-gray-700 dark:text-gray-200" placeholder="remote dir" x-model="deployForm.remote_dir">
         </div>
@@ -836,13 +841,14 @@
                data-editor-tab-scroll
                class="editor-tab-scroll min-w-0 flex-1 overflow-x-auto rounded border border-gray-200 bg-white/80 dark:border-gray-700 dark:bg-gray-800/80">
             <div class="flex w-max items-center gap-1 px-1 py-0.5">
-              <template x-for="(tab, idx) in editorTabs" :key="tab.path">
+              <template x-for="(tab, idx) in editorTabs" :key="editorTabKey(tab)">
                 <div class="text-xs border px-2 py-1 rounded shrink-0 flex items-center gap-1"
                      :data-editor-tab-index="idx"
                      :class="terminalPanelTab === 'editor' && activeEditorTab === idx
                        ? 'border-slate-400 bg-slate-900 text-white'
                        : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700'">
-                  <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="tabFileBase(tab.path)"></button>
+                  <span x-show="tab.type === 'terminal'" class="text-[10px] text-orange-300 shrink-0">bash</span>
+                  <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="editorTabLabel(tab)"></button>
                   <span x-show="tab.dirty" class="text-amber-300 shrink-0">*</span>
                   <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
                 </div>
@@ -852,6 +858,11 @@
         </div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
+        <button @click="launchBashFromTerminal()"
+                :disabled="terminalBashLaunching || !terminalWindow"
+                title="Start a Bash tab in the current directory"
+                class="text-xs border border-orange-300 bg-white dark:bg-gray-700 text-orange-700 dark:text-orange-400 px-2 py-1 rounded hover:bg-orange-50 dark:hover:bg-orange-900/30 disabled:opacity-50">
+          <span x-text="terminalBashLaunching ? 'Starting...' : 'New Bash'"></span></button>
         <button @click="sendTerminalKey('Enter')"
                 class="text-xs border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-600">Enter</button>
         <button @click="copyTerminalSelection()"
@@ -895,13 +906,14 @@
            data-editor-tab-scroll
            class="editor-tab-scroll min-w-0 flex-1 overflow-x-auto rounded-t border-x border-t border-gray-200 bg-gray-50 px-0.5 pt-0.5 dark:border-gray-700 dark:bg-gray-900/40">
         <div class="flex w-max items-center gap-0.5">
-          <template x-for="(tab, idx) in editorTabs" :key="tab.path">
+          <template x-for="(tab, idx) in editorTabs" :key="editorTabKey(tab)">
             <div class="border-x border-t px-2 py-1.5 text-xs shrink-0 flex items-center gap-1 rounded-t"
                  :data-editor-tab-index="idx"
                  :class="terminalPanelTab === 'editor' && activeEditorTab === idx
                    ? 'bg-slate-900 text-white border-slate-900'
                    : 'bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'">
-              <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="tabFileBase(tab.path)"></button>
+              <span x-show="tab.type === 'terminal'" class="text-[10px] text-orange-300 shrink-0">bash</span>
+              <button @click="setTerminalTab('editor'); switchEditorTab(idx)" class="hover:underline min-w-0 max-w-[12rem] truncate" x-text="editorTabLabel(tab)"></button>
               <span x-show="tab.dirty" class="text-amber-300 shrink-0">*</span>
               <button @click.stop="closeEditorTab(idx)" class="text-gray-400 hover:text-red-400 shrink-0 leading-none">&times;</button>
             </div>
@@ -1056,16 +1068,17 @@
         <div x-show="terminalPanelTab === 'editor'"
                class="flex flex-1 min-h-0 flex-col overflow-hidden rounded-r border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
             <div class="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 px-3 py-2 text-xs">
-              <span class="min-w-0 flex-1 truncate font-mono text-gray-600 dark:text-gray-300" x-text="editor.path || 'Select a file from the left sidebar'"></span>
+              <span class="min-w-0 flex-1 truncate font-mono text-gray-600 dark:text-gray-300" x-text="editorHeaderLabel()"></span>
               <span x-show="editor.loading" class="text-gray-400">Loading...</span>
               <span x-show="editor.saving" class="text-gray-400">Saving...</span>
               <span x-show="editor.deleting" class="text-gray-400">Deleting...</span>
               <span x-show="editor.dirty && !editor.saving && !editor.deleting" class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">modified</span>
+              <span x-show="editor.type === 'terminal'" class="text-[10px] text-orange-600 dark:text-orange-400 font-medium">Bash</span>
               <span x-show="editor.type === 'image'" class="text-[10px] text-purple-600 dark:text-purple-400 font-medium">🖼 Image</span>
               <span x-show="editor.type === 'pdf'" class="text-[10px] text-red-600 dark:text-red-400 font-medium">📄 PDF</span>
               <span x-show="editor.type === 'unsupported'" class="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Unsupported</span>
               <button @click="deleteEditorFile()"
-                      :disabled="!editor.path || editor.type === 'unsupported' || editor.loading || editor.saving || editor.deleting"
+                      :disabled="!editor.path || editor.type === 'terminal' || editor.type === 'unsupported' || editor.loading || editor.saving || editor.deleting"
                       class="rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
                       x-text="editor.deleting ? 'Deleting...' : 'Delete'"></button>
               <button @click="openRawEditorFile()"
@@ -1078,6 +1091,11 @@
                       class="rounded border border-blue-200 bg-white dark:bg-gray-700 px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40">Save</button>
             </div>
             <div x-show="editor.error" class="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="editor.error"></div>
+
+            <!-- Terminal tab -->
+            <div x-show="editor.type === 'terminal'"
+                 class="terminal-frame flex-1 min-h-0 min-w-0"
+                 x-ref="editorTerminalOutput"></div>
 
             <!-- Text editor -->
             <div x-show="editor.type === 'text'" class="relative flex-1 min-h-0 bg-white dark:bg-gray-800" x-ref="editorViewport">
@@ -1677,6 +1695,7 @@ function superCliTerminal() {
     localEnabled: false,
     enablingLocal: false,
     terminalWindow: null,
+    terminalBashLaunching: false,
     terminalZoom: false,
     zoomStartedAt: null,
     terminalSidebarOpen: true,
@@ -1703,6 +1722,22 @@ function superCliTerminal() {
     terminalLastPasteData: '',
     terminalLastPasteAt: 0,
     terminalDropActive: false,
+    editorTerminal: null,
+    editorTerminalFitAddon: null,
+    editorTerminalSocket: null,
+    editorTerminalResizeObserver: null,
+    editorTerminalDataDisposable: null,
+    editorTerminalCopyHandler: null,
+    editorTerminalPasteHandler: null,
+    editorTerminalWheelHandler: null,
+    editorTerminalTouchStartHandler: null,
+    editorTerminalTouchMoveHandler: null,
+    editorTerminalTouchEndHandler: null,
+    editorTerminalTouchLastY: null,
+    editorTerminalLastPasteData: '',
+    editorTerminalLastPasteAt: 0,
+    editorTerminalActiveKey: '',
+    editorTerminalLastResizeSignature: '',
     terminalPanelTab: 'terminal',
     terminalEditorCache: {},
     terminalSelection: [],
@@ -2212,6 +2247,7 @@ function superCliTerminal() {
 
     async openTerminal(w) {
       this.saveCurrentTerminalEditorCache();
+      this.closeEditorTerminalSession();
       this.closeTerminalSession();
       this.terminalWindow = w;
       if (this.terminalZoom) this.zoomStartedAt = Date.now();
@@ -2465,6 +2501,9 @@ function superCliTerminal() {
           this.sendTerminalResize({ onlyIfChanged: true });
           this.terminal?.focus();
         });
+      } else {
+        const terminalTab = this.activeEditorTerminalTab();
+        if (terminalTab) this.$nextTick(() => this.startEditorTerminalSession(terminalTab));
       }
     },
 
@@ -2535,6 +2574,28 @@ function superCliTerminal() {
 
     tabFileBase(path) {
       return (path || '').split('/').pop() || path || '';
+    },
+
+    editorTabKey(tab) {
+      if (tab?.type === 'terminal') return `terminal:${tab.node_id || 'local'}:${tab.tmux_session || tab.path}`;
+      return `${tab?.type || 'text'}:${tab?.path || ''}`;
+    },
+
+    editorTabLabel(tab) {
+      if (tab?.type === 'terminal') return tab.title || 'Bash';
+      return this.tabFileBase(tab?.path);
+    },
+
+    activeEditorTerminalTab() {
+      if (this.activeEditorTab < 0 || this.activeEditorTab >= this.editorTabs.length) return null;
+      const tab = this.editorTabs[this.activeEditorTab];
+      return tab?.type === 'terminal' ? tab : null;
+    },
+
+    editorHeaderLabel() {
+      const tab = this.activeEditorTerminalTab();
+      if (tab) return `${tab.title || 'Bash'} · ${tab.cwd || tab.tmux_session || ''}`;
+      return this.editor.path || 'Select a file from the left sidebar';
     },
 
     fileNameTooltipCoords(event) {
@@ -2775,7 +2836,7 @@ function superCliTerminal() {
       if (this.activeEditorTab < 0 || this.activeEditorTab >= this.editorTabs.length) return;
       const tab = this.editorTabs[this.activeEditorTab];
       // Only save state for text tabs (viewer tabs are read-only)
-      if (tab.type !== 'image' && tab.type !== 'pdf') {
+      if (tab.type !== 'image' && tab.type !== 'pdf' && tab.type !== 'terminal') {
         tab.content = this.editor.content;
         tab.dirty = this.editor.dirty;
       }
@@ -2783,9 +2844,16 @@ function superCliTerminal() {
 
     switchEditorTab(idx) {
       if (idx < 0 || idx >= this.editorTabs.length) return;
+      const previousTerminalTab = this.activeEditorTerminalTab();
+      const nextTab = this.editorTabs[idx];
+      const previousTerminalKey = previousTerminalTab ? this.editorTabKey(previousTerminalTab) : '';
+      const nextKey = this.editorTabKey(nextTab);
+      if (previousTerminalKey && previousTerminalKey !== nextKey) {
+        this.closeEditorTerminalSession();
+      }
       this._saveActiveTab();
       this.activeEditorTab = idx;
-      const tab = this.editorTabs[idx];
+      const tab = nextTab;
       this.editor.path = tab.path;
       this.editor.type = tab.type || 'text';
       this.editor.rawUrl = tab.rawUrl || '';
@@ -2794,7 +2862,11 @@ function superCliTerminal() {
       this.editor.dirty = !!tab.dirty;
       this.editor.error = '';
       this.editor.loading = false;
-      if (tab.type === 'image' || tab.type === 'pdf') {
+      if (tab.type === 'terminal') {
+        const codeEl = this.$refs.editorHighlight;
+        if (codeEl) codeEl.innerHTML = '';
+        this.$nextTick(() => this.startEditorTerminalSession(tab));
+      } else if (tab.type === 'image' || tab.type === 'pdf') {
         // viewer tab — clear text highlight
         const codeEl = this.$refs.editorHighlight;
         if (codeEl) codeEl.innerHTML = '';
@@ -2822,8 +2894,12 @@ function superCliTerminal() {
       if (idx < 0 || idx >= this.editorTabs.length) return;
       const tab = this.editorTabs[idx];
       // Viewer tabs (image/pdf) never have unsaved changes
-      if (tab.dirty && tab.type !== 'image' && tab.type !== 'pdf') {
+      if (tab.dirty && tab.type !== 'image' && tab.type !== 'pdf' && tab.type !== 'terminal') {
         if (!confirm('Discard unsaved changes to ' + this.tabFileBase(tab.path) + '?')) return;
+      }
+      if (tab.type === 'terminal') {
+        if (idx === this.activeEditorTab) this.closeEditorTerminalSession();
+        this.closeEditorTerminalTab(tab);
       }
       // If closing the active tab, save current edits first
       if (idx === this.activeEditorTab) {
@@ -2857,13 +2933,17 @@ function superCliTerminal() {
     closeAllEditorTabs() {
       if (!this.editorTabs.length) return;
       this._saveActiveTab();
-      const dirtyTabs = this.editorTabs.filter(tab => tab.dirty && tab.type !== 'image' && tab.type !== 'pdf');
+      const dirtyTabs = this.editorTabs.filter(tab => tab.dirty && tab.type !== 'image' && tab.type !== 'pdf' && tab.type !== 'terminal');
       if (dirtyTabs.length) {
         const label = dirtyTabs.length === 1
           ? this.tabFileBase(dirtyTabs[0].path)
           : `${dirtyTabs.length} modified files`;
         if (!confirm('Discard unsaved changes to ' + label + ' and close all editor tabs?')) return;
       }
+      this.editorTabs
+        .filter(tab => tab.type === 'terminal')
+        .forEach(tab => this.closeEditorTerminalTab(tab));
+      this.closeEditorTerminalSession();
       if (this._highlightTimeout) clearTimeout(this._highlightTimeout);
       this._highlightTimeout = null;
       this.editorTabs = [];
@@ -2902,6 +2982,20 @@ function superCliTerminal() {
     },
 
     sanitizeEditorTab(tab = {}) {
+      if (tab.type === 'terminal') {
+        return {
+          path: tab.path || (tab.tmux_session ? `terminal:${tab.tmux_session}` : ''),
+          type: 'terminal',
+          title: tab.title || 'Bash',
+          node_id: tab.node_id || 'local',
+          node_name: tab.node_name || '',
+          tmux_session: tab.tmux_session || '',
+          cwd: tab.cwd || '',
+          content: '',
+          originalContent: '',
+          dirty: false,
+        };
+      }
       return {
         path: tab.path || '',
         type: tab.type || 'text',
@@ -2952,7 +3046,13 @@ function superCliTerminal() {
         this.editor = this.sanitizeEditorState(cached.editor || {});
       }
       this.terminalPanelTab = cached.terminalPanelTab === 'editor' ? 'editor' : 'terminal';
-      if (this.editor.type === 'image' || this.editor.type === 'pdf') {
+      if (this.editor.type === 'terminal') {
+        const codeEl = this.$refs.editorHighlight;
+        if (codeEl) codeEl.innerHTML = '';
+        if (this.terminalPanelTab === 'editor' && active >= 0) {
+          this.$nextTick(() => this.startEditorTerminalSession(this.editorTabs[active]));
+        }
+      } else if (this.editor.type === 'image' || this.editor.type === 'pdf') {
         const codeEl = this.$refs.editorHighlight;
         if (codeEl) codeEl.innerHTML = '';
       } else {
@@ -2965,12 +3065,16 @@ function superCliTerminal() {
     clearTerminalEditorCache(wOrKey) {
       const key = typeof wOrKey === 'string' ? wOrKey : this.windowKey(wOrKey);
       if (!key || !this.terminalEditorCache[key]) return;
+      ((this.terminalEditorCache[key] || {}).editorTabs || [])
+        .filter(tab => tab.type === 'terminal')
+        .forEach(tab => this.closeEditorTerminalTab(tab));
       const next = { ...this.terminalEditorCache };
       delete next[key];
       this.terminalEditorCache = next;
     },
 
     resetEditor() {
+      this.closeEditorTerminalSession();
       if (this._highlightTimeout) clearTimeout(this._highlightTimeout);
       this._highlightTimeout = null;
       this.editor = this.blankEditorState();
@@ -2982,6 +3086,7 @@ function superCliTerminal() {
 
     showUnsupportedEditorFile(path, message) {
       this._saveActiveTab();
+      if (this.activeEditorTerminalTab()) this.closeEditorTerminalSession();
       this.terminalPanelTab = 'editor';
       this.activeEditorTab = -1;
       this.editor = this.blankEditorState({
@@ -2996,6 +3101,7 @@ function superCliTerminal() {
 
     async openEditorFile(path) {
       if (!this.terminalWindow || !path) return;
+      if (this.activeEditorTerminalTab()) this.closeEditorTerminalSession();
       const mode = this.editorFileOpenMode(path);
       if (mode.type === 'unsupported') {
         this.showUnsupportedEditorFile(path, mode.message);
@@ -3289,10 +3395,14 @@ function superCliTerminal() {
 
     closeTerminal(options = {}) {
       if (options.discardCache && this.terminalWindow) {
+        this.editorTabs
+          .filter(tab => tab.type === 'terminal')
+          .forEach(tab => this.closeEditorTerminalTab(tab));
         this.clearTerminalEditorCache(this.terminalWindow);
       } else {
         this.saveCurrentTerminalEditorCache();
       }
+      this.closeEditorTerminalSession();
       this.closeTerminalSession();
       this.terminalWindow = null;
       this.terminalZoom = false;
@@ -3733,6 +3843,10 @@ function superCliTerminal() {
     },
 
     sendTerminalKey(key) {
+      if (this.visibleEditorTerminalActive()) {
+        this.sendEditorTerminalKey(key);
+        return;
+      }
       const map = { Enter: '\r', 'C-c': '\x03' };
       const data = map[key] || key;
       this.sendTerminalData(data);
@@ -3807,6 +3921,9 @@ function superCliTerminal() {
     },
 
     async copyTerminalSelection() {
+      if (this.visibleEditorTerminalActive()) {
+        return this.copyEditorTerminalSelection();
+      }
       const text = this.terminal?.getSelection() || '';
       if (!text) {
         this.toast('No terminal selection');
@@ -3824,6 +3941,9 @@ function superCliTerminal() {
     },
 
     async pasteTerminalClipboard() {
+      if (this.visibleEditorTerminalActive()) {
+        return this.pasteEditorTerminalClipboard();
+      }
       if (!this.canReadClipboard()) {
         this.toast('Browser blocks direct paste here. Focus terminal and press Ctrl+V.');
         this.terminal?.focus();
@@ -3841,6 +3961,325 @@ function superCliTerminal() {
       } catch (e) {
         this.toast('Paste failed: ' + (e.message || e));
         this.terminal?.focus();
+      }
+    },
+
+    visibleEditorTerminalActive() {
+      return this.terminalPanelTab === 'editor' && !!this.activeEditorTerminalTab();
+    },
+
+    editorTerminalUrl(tab, suffix = 'terminal') {
+      const nodeId = encodeURIComponent(tab.node_id || this.terminalWindow?.node_id || 'local');
+      return `/api/nodes/${nodeId}/editor-terminals/${encodeURIComponent(tab.tmux_session)}/${suffix}`;
+    },
+
+    editorTerminalWsUrl(tab) {
+      const url = new URL(this.editorTerminalUrl(tab, 'terminal/ws'), window.location.href);
+      url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const dims = this.editorTerminalDimensions();
+      url.searchParams.set('cols', String(dims.cols));
+      url.searchParams.set('rows', String(dims.rows));
+      return url.toString();
+    },
+
+    editorTerminalDimensions() {
+      return {
+        cols: Math.max(20, this.editorTerminal?.cols || 80),
+        rows: Math.max(5, this.editorTerminal?.rows || 24),
+      };
+    },
+
+    async startEditorTerminalSession(tab) {
+      if (!tab?.tmux_session) return;
+      const expectedKey = this.editorTabKey(tab);
+      if (this.editorTerminal && this.editorTerminalActiveKey === expectedKey) {
+        this.fitEditorTerminal();
+        this.sendEditorTerminalResize({ onlyIfChanged: true });
+        this.editorTerminal.focus();
+        return;
+      }
+      this.closeEditorTerminalSession();
+      const el = this.$refs.editorTerminalOutput;
+      if (!el) return;
+      if (!window.Terminal) {
+        el.textContent = 'xterm.js failed to load. Check browser network access to the CDN.';
+        return;
+      }
+      el.innerHTML = '';
+      const term = new Terminal({
+        cursorBlink: true,
+        convertEol: false,
+        allowProposedApi: false,
+        scrollback: 100000,
+        scrollOnUserInput: true,
+        scrollOnWrite: false,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+        fontSize: 12,
+        lineHeight: 1.25,
+        theme: {
+          background: '#020617',
+          foreground: '#e2e8f0',
+          cursor: '#f8fafc',
+          selectionBackground: '#475569',
+        },
+      });
+      const fitAddon = window.FitAddon ? new window.FitAddon.FitAddon() : null;
+      if (fitAddon) term.loadAddon(fitAddon);
+      term.open(el);
+      this.editorTerminal = term;
+      this.editorTerminalFitAddon = fitAddon;
+      this.editorTerminalActiveKey = expectedKey;
+      this.editorTerminalLastPasteData = '';
+      this.editorTerminalLastPasteAt = 0;
+      this.fitEditorTerminal();
+
+      const ws = new WebSocket(this.editorTerminalWsUrl(tab));
+      this.editorTerminalSocket = ws;
+      term.writeln('\r\n\x1b[90m[LUCID] connecting to bash tab...\x1b[0m');
+      ws.addEventListener('open', () => {
+        this.fitEditorTerminal();
+        this.sendEditorTerminalResize();
+        term.focus();
+      });
+      ws.addEventListener('message', (event) => {
+        const data = typeof event.data === 'string' ? event.data : '';
+        if (data) term.write(data);
+      });
+      ws.addEventListener('close', () => {
+        term.writeln('\r\n\x1b[90m[LUCID] bash tab disconnected\x1b[0m');
+      });
+      ws.addEventListener('error', () => {
+        term.writeln('\r\n\x1b[31m[LUCID] bash tab websocket error\x1b[0m');
+      });
+      this.editorTerminalDataDisposable = term.onData(data => this.sendEditorTerminalData(data));
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.type !== 'keydown') return true;
+        const key = (event.key || '').toLowerCase();
+        const ctrlOrMeta = event.ctrlKey || event.metaKey;
+        if ((ctrlOrMeta && key === 'v') || (event.shiftKey && key === 'insert')) {
+          this.editorTerminal?.focus();
+          return false;
+        }
+        if (ctrlOrMeta && key === 'c' && !event.shiftKey && term.hasSelection()) {
+          this._writeClipboard(term.getSelection());
+          this.clearEditorTerminalSelection();
+          return false;
+        }
+        return true;
+      });
+
+      this.editorTerminalCopyHandler = (event) => {
+        const text = this.editorTerminal?.getSelection() || '';
+        if (!text) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.clipboardData) {
+          event.clipboardData.setData('text/plain', text);
+        } else {
+          this._writeClipboard(text);
+        }
+        this.clearEditorTerminalSelection();
+      };
+      el.addEventListener('copy', this.editorTerminalCopyHandler, true);
+
+      this.editorTerminalPasteHandler = (event) => {
+        const text = event.clipboardData?.getData('text/plain') || '';
+        if (!text) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.sendEditorTerminalPaste(text);
+        this.editorTerminal?.focus();
+      };
+      el.addEventListener('paste', this.editorTerminalPasteHandler, true);
+
+      this.editorTerminalWheelHandler = (event) => {
+        if (event.ctrlKey) return;
+        if (Math.abs(event.deltaY || 0) < Math.abs(event.deltaX || 0)) return;
+        const rowPixels = 18;
+        const pagePixels = Math.max(1, this.editorTerminal?.rows || 24) * rowPixels;
+        const unit = event.deltaMode === 1 ? rowPixels : event.deltaMode === 2 ? pagePixels : 1;
+        this.sendEditorTerminalScrollDelta((event.deltaY || 0) * unit, event);
+      };
+      el.addEventListener('wheel', this.editorTerminalWheelHandler, { capture: true, passive: false });
+
+      this.editorTerminalTouchStartHandler = (event) => {
+        if (!event.touches || event.touches.length !== 1) return;
+        this.editorTerminalTouchLastY = event.touches[0].clientY;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+      this.editorTerminalTouchMoveHandler = (event) => {
+        if (!event.touches || event.touches.length !== 1 || this.editorTerminalTouchLastY === null) return;
+        const y = event.touches[0].clientY;
+        const delta = this.editorTerminalTouchLastY - y;
+        this.editorTerminalTouchLastY = y;
+        this.sendEditorTerminalScrollDelta(delta, event);
+      };
+      this.editorTerminalTouchEndHandler = () => { this.editorTerminalTouchLastY = null; };
+      el.addEventListener('touchstart', this.editorTerminalTouchStartHandler, { capture: true, passive: false });
+      el.addEventListener('touchmove', this.editorTerminalTouchMoveHandler, { capture: true, passive: false });
+      el.addEventListener('touchend', this.editorTerminalTouchEndHandler, true);
+      el.addEventListener('touchcancel', this.editorTerminalTouchEndHandler, true);
+
+      this.editorTerminalResizeObserver = new ResizeObserver(() => {
+        this.fitEditorTerminal();
+        this.sendEditorTerminalResize({ onlyIfChanged: true });
+      });
+      this.editorTerminalResizeObserver.observe(el);
+      this.primeEditorTerminalScrollback(term, tab, expectedKey);
+    },
+
+    closeEditorTerminalSession() {
+      if (this.editorTerminalResizeObserver) this.editorTerminalResizeObserver.disconnect();
+      this.editorTerminalResizeObserver = null;
+      const el = this.$refs.editorTerminalOutput;
+      if (this.editorTerminalCopyHandler && el) el.removeEventListener('copy', this.editorTerminalCopyHandler, true);
+      if (this.editorTerminalPasteHandler && el) el.removeEventListener('paste', this.editorTerminalPasteHandler, true);
+      if (this.editorTerminalWheelHandler && el) el.removeEventListener('wheel', this.editorTerminalWheelHandler, true);
+      if (this.editorTerminalTouchStartHandler && el) el.removeEventListener('touchstart', this.editorTerminalTouchStartHandler, true);
+      if (this.editorTerminalTouchMoveHandler && el) el.removeEventListener('touchmove', this.editorTerminalTouchMoveHandler, true);
+      if (this.editorTerminalTouchEndHandler && el) {
+        el.removeEventListener('touchend', this.editorTerminalTouchEndHandler, true);
+        el.removeEventListener('touchcancel', this.editorTerminalTouchEndHandler, true);
+      }
+      this.editorTerminalCopyHandler = null;
+      this.editorTerminalPasteHandler = null;
+      this.editorTerminalWheelHandler = null;
+      this.editorTerminalTouchStartHandler = null;
+      this.editorTerminalTouchMoveHandler = null;
+      this.editorTerminalTouchEndHandler = null;
+      this.editorTerminalTouchLastY = null;
+      if (this.editorTerminalSocket) this.editorTerminalSocket.close();
+      this.editorTerminalSocket = null;
+      if (this.editorTerminalDataDisposable) this.editorTerminalDataDisposable.dispose();
+      this.editorTerminalDataDisposable = null;
+      if (this.editorTerminal) this.editorTerminal.dispose();
+      this.editorTerminal = null;
+      this.editorTerminalFitAddon = null;
+      this.editorTerminalActiveKey = '';
+      this.editorTerminalLastResizeSignature = '';
+      this.editorTerminalLastPasteData = '';
+      this.editorTerminalLastPasteAt = 0;
+    },
+
+    async closeEditorTerminalTab(tab) {
+      if (!tab?.tmux_session) return;
+      try {
+        await fetch(this.editorTerminalUrl(tab, 'close'), { method: 'POST' });
+      } catch (_) {}
+    },
+
+    async primeEditorTerminalScrollback(term, tab, expectedKey) {
+      try {
+        const url = new URL(this.editorTerminalUrl(tab, 'terminal'), window.location.href);
+        url.searchParams.set('lines', '5000');
+        const r = await fetch(url.toString());
+        const d = await r.json();
+        if (!r.ok || !d.ok || this.editorTerminalActiveKey !== expectedKey || this.editorTerminal !== term) return;
+        const output = String(d.output || '');
+        if (output) {
+          await new Promise(resolve => term.write(output.replace(/\r?\n/g, '\r\n'), resolve));
+          term.scrollToBottom();
+        }
+      } catch (_) {}
+    },
+
+    fitEditorTerminal() {
+      try {
+        this.editorTerminalFitAddon?.fit();
+      } catch (_) {}
+    },
+
+    sendEditorTerminalResize(options = {}) {
+      const ws = this.editorTerminalSocket;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const dims = this.editorTerminalDimensions();
+      const signature = `${dims.cols}x${dims.rows}`;
+      if (options.onlyIfChanged && signature === this.editorTerminalLastResizeSignature) return;
+      this.editorTerminalLastResizeSignature = signature;
+      ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+    },
+
+    sendEditorTerminalScrollDelta(delta, event = null) {
+      const amount = Math.abs(Number(delta) || 0);
+      if (amount < 1 || this.editorTerminalSocket?.readyState !== WebSocket.OPEN) return false;
+      const rowPixels = 18;
+      const rows = Math.max(5, this.editorTerminal?.rows || 24);
+      const lines = Math.max(1, Math.min(rows, Math.ceil(amount / rowPixels)));
+      this.editorTerminalSocket.send(JSON.stringify({
+        type: 'scroll',
+        direction: delta < 0 ? 'up' : 'down',
+        lines,
+      }));
+      if (event) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+      return true;
+    },
+
+    sendEditorTerminalKey(key) {
+      const map = { Enter: '\r', 'C-c': '\x03' };
+      this.sendEditorTerminalData(map[key] || key);
+      this.editorTerminal?.focus();
+    },
+
+    sendEditorTerminalData(data, options = {}) {
+      if (!data) return;
+      const duplicatePaste = !options.fromPaste
+        && data === this.editorTerminalLastPasteData
+        && Date.now() - this.editorTerminalLastPasteAt < 500;
+      if (duplicatePaste) return;
+      if (this.editorTerminalSocket?.readyState === WebSocket.OPEN) {
+        this.editorTerminalSocket.send(JSON.stringify({ type: 'data', data }));
+      }
+    },
+
+    sendEditorTerminalPaste(data) {
+      const pasteData = this.normalizeTerminalPasteData(data);
+      if (!pasteData) return;
+      const now = Date.now();
+      if (pasteData === this.editorTerminalLastPasteData && now - this.editorTerminalLastPasteAt < 500) return;
+      this.editorTerminalLastPasteData = pasteData;
+      this.editorTerminalLastPasteAt = now;
+      this.sendEditorTerminalData(pasteData, { fromPaste: true });
+    },
+
+    async copyEditorTerminalSelection() {
+      const text = this.editorTerminal?.getSelection() || '';
+      if (!text) {
+        this.toast('No terminal selection');
+        this.editorTerminal?.focus();
+        return;
+      }
+      this._writeClipboard(text);
+      this.clearEditorTerminalSelection();
+    },
+
+    clearEditorTerminalSelection() {
+      try {
+        this.editorTerminal?.clearSelection();
+      } catch (_) {}
+    },
+
+    async pasteEditorTerminalClipboard() {
+      if (!this.canReadClipboard()) {
+        this.toast('Browser blocks direct paste here. Focus terminal and press Ctrl+V.');
+        this.editorTerminal?.focus();
+        return;
+      }
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) {
+          this.toast('Clipboard has no text');
+          this.editorTerminal?.focus();
+          return;
+        }
+        this.sendEditorTerminalPaste(text);
+        this.editorTerminal?.focus();
+      } catch (e) {
+        this.toast('Paste failed: ' + (e.message || e));
+        this.editorTerminal?.focus();
       }
     },
 
@@ -4211,9 +4650,9 @@ function superCliTerminal() {
       this.toast('Installing local tmux runtime...');
       try {
         const r = await fetch('/api/nodes/local/enable', { method: 'POST' });
-        const d = await r.json();
+        const d = await this.readJsonResponse(r);
         if (!r.ok || !d.ok) {
-          this.toast('Enable local failed: ' + (d.detail || d.error || 'unknown error'));
+          this.toast('Enable local failed: ' + this.responseError(r, d));
           return;
         }
         await this.refreshNodes();
@@ -4233,9 +4672,9 @@ function superCliTerminal() {
       this.deletingNodeId = n.id;
       try {
         const r = await fetch('/api/nodes/' + encodeURIComponent(n.id), { method: 'DELETE' });
-        const d = await r.json();
+        const d = await this.readJsonResponse(r);
         if (!r.ok || !d.ok) {
-          this.toast('Delete failed: ' + (d.detail || d.error || ''));
+          this.toast('Delete failed: ' + this.responseError(r, d));
           return;
         }
         this.toast('Deleted node ' + (d.name || d.node_id));
@@ -4265,9 +4704,9 @@ function superCliTerminal() {
       this.removingNodeId = n.id;
       try {
         const r = await fetch('/api/nodes/' + encodeURIComponent(n.id) + '/remove', { method: 'POST' });
-        const d = await r.json();
+        const d = await this.readJsonResponse(r);
         if (!r.ok || !d.ok) {
-          this.toast('Remove failed: ' + (d.detail || d.error || ''));
+          this.toast('Remove failed: ' + this.responseError(r, d));
           return;
         }
         this.toast('Removed node ' + (d.name || d.node_id) + (d.local_cleaned ? ' (local cleaned)' : d.remote_cleaned ? ' (remote cleaned)' : ''));
@@ -4403,9 +4842,9 @@ function superCliTerminal() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        const d = await r.json();
+        const d = await this.readJsonResponse(r);
         if (!r.ok || !d.ok || !d.job_id) {
-          throw new Error(d.detail || d.error || 'deploy job failed to start');
+          throw new Error(this.responseError(r, d, 'deploy job failed to start'));
         }
         this.applyDeployStatus(d);
         await this.pollDeployJob(d.job_id);
@@ -4440,9 +4879,9 @@ function superCliTerminal() {
       this.syncSkipped = [];
       try {
         const r = await fetch('/api/nodes/deploy/sync-all', { method: 'POST' });
-        const d = await r.json();
+        const d = await this.readJsonResponse(r);
         if (!r.ok || !d.ok) {
-          throw new Error(d.detail || d.error || 'sync failed to start');
+          throw new Error(this.responseError(r, d, 'sync failed to start'));
         }
         this.syncJobs = d.jobs || [];
         this.syncSkipped = d.skipped || [];
@@ -4461,8 +4900,8 @@ function superCliTerminal() {
         const updates = await Promise.all(this.syncJobs.map(async (job) => {
           if (['succeeded', 'failed'].includes(job.status)) return job;
           const r = await fetch(`/api/nodes/deploy/jobs/${encodeURIComponent(job.job_id)}`);
-          const d = await r.json();
-          if (!r.ok) return { ...job, status: 'failed', error: d.detail || d.error || 'deploy status request failed' };
+          const d = await this.readJsonResponse(r);
+          if (!r.ok) return { ...job, status: 'failed', error: this.responseError(r, d, 'deploy status request failed') };
           return { ...job, ...d, node_id: job.node_id, node_name: job.node_name };
         }));
         this.syncJobs = updates;
@@ -4820,9 +5259,9 @@ function superCliTerminal() {
       while (this.deploying) {
         await new Promise(r => setTimeout(r, 1000));
         const r = await fetch(`/api/nodes/deploy/jobs/${encodeURIComponent(jobId)}`);
-        const d = await r.json();
+        const d = await this.readJsonResponse(r);
         if (!r.ok) {
-          throw new Error(d.detail || d.error || 'deploy status request failed');
+          throw new Error(this.responseError(r, d, 'deploy status request failed'));
         }
         this.applyDeployStatus(d);
         if (d.status === 'succeeded') {
@@ -4857,12 +5296,12 @@ function superCliTerminal() {
           tmux: true,
         }),
       });
-      const d = await r.json();
+      const d = await this.readJsonResponse(r);
       if (d.ok) {
         this.toast('Launched tmux session: ' + d.tmux_session);
         await this.openLaunchedTerminal(d.tmux_session);
       } else {
-        this.toast('Launch failed: ' + (d.stderr || d.error || d.detail || ''));
+        this.toast('Launch failed: ' + (d.stderr || this.responseError(r, d)));
       }
     },
 
@@ -4881,12 +5320,75 @@ function superCliTerminal() {
           tmux: true,
         }),
       });
-      const d = await r.json();
+      const d = await this.readJsonResponse(r);
       if (d.ok) {
         this.toast('Launched bash: ' + d.tmux_session);
         await this.openLaunchedTerminal(d.tmux_session);
       } else {
-        this.toast('Bash launch failed: ' + (d.stderr || d.error || d.detail || ''));
+        this.toast('Bash launch failed: ' + (d.stderr || this.responseError(r, d)));
+      }
+    },
+
+    async currentTerminalCwd(w) {
+      const fallback = w?.cwd || '';
+      if (!w) return fallback;
+      try {
+        const r = await fetch(this.nodeWindowUrl(w, 'cwd'));
+        const d = await r.json();
+        if (r.ok && d.ok && d.cwd) return d.cwd;
+      } catch (_) {
+        // Fall back to the registered launch cwd for older agents or transient tmux errors.
+      }
+      return fallback;
+    },
+
+    async launchBashFromTerminal() {
+      if (!this.terminalWindow || this.terminalBashLaunching) return;
+      const w = this.terminalWindow;
+      this.terminalBashLaunching = true;
+      try {
+        const cwd = await this.currentTerminalCwd(w);
+        const nodeId = w.node_id || 'local';
+        const r = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/editor-terminals`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cwd: cwd || undefined,
+            title: 'Bash',
+          }),
+        });
+        const d = await this.readJsonResponse(r);
+        if (d.ok) {
+          this._saveActiveTab();
+          const tab = {
+            path: `terminal:${d.tmux_session}`,
+            type: 'terminal',
+            title: d.title || 'Bash',
+            node_id: nodeId,
+            node_name: w.node_name || w.node_id || '',
+            tmux_session: d.tmux_session,
+            cwd: d.cwd || cwd || '',
+            content: '',
+            originalContent: '',
+            dirty: false,
+          };
+          this.editorTabs.push(tab);
+          this.terminalPanelTab = 'editor';
+          this.switchEditorTab(this.editorTabs.length - 1);
+          this.toast('Opened Bash tab: ' + d.tmux_session);
+        } else {
+          let error = d.stderr || d.error || d.detail || '';
+          if (r.status === 404 && d.detail === 'Not Found') {
+            error = 'Hub route is not loaded. Restart the LUCID hub backend, then refresh the page.';
+          } else if (/HTTP 404|Not Found/i.test(error)) {
+            error = 'Remote agent does not have the editor Bash endpoint yet. Sync/redeploy that node and make sure the remote agent restarted.';
+          }
+          this.toast('Bash launch failed: ' + error);
+        }
+      } catch (e) {
+        this.toast('Bash launch failed: ' + String(e.message || e));
+      } finally {
+        this.terminalBashLaunching = false;
       }
     },
 

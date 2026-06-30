@@ -45,7 +45,7 @@ from core.hub.skills_sync import (
     pull_skills_via_ssh,
     sync_skills_via_ssh,
 )
-from core.hub.ssh_deploy import DeployRequest, deploy_agent
+from core.hub.ssh_deploy import DeployRequest, cleanup_remote_node, deploy_agent
 from core.knowledge import memory, plans, skills
 from core.terminal import actions, path_browser, registry, runner, runtime
 
@@ -1060,6 +1060,21 @@ def _local_window_rename(platform: str, pid: int, payload: dict) -> dict:
     return registry.rename_managed(platform, pid, _clean_display_name(payload.get("name") or payload.get("display_name")))
 
 
+EDITOR_TERMINAL_TMUX_PREFIX = "lucid-editor-"
+
+
+def _is_editor_terminal_session(session_name: str) -> bool:
+    return (
+        session_name.startswith(EDITOR_TERMINAL_TMUX_PREFIX)
+        and all(ch.isalnum() or ch in {"-", "_"} for ch in session_name)
+    )
+
+
+def _require_editor_terminal_session(session_name: str) -> None:
+    if not _is_editor_terminal_session(session_name):
+        raise HTTPException(400, "invalid editor terminal session")
+
+
 def _run_tmux(args: list[str]) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -1074,15 +1089,85 @@ def _run_tmux(args: list[str]) -> subprocess.CompletedProcess[str]:
         raise HTTPException(504, f"tmux command timed out: {' '.join(args)}") from e
 
 
-def _local_window_terminal(platform: str, pid: int, lines: int = 200) -> dict:
-    session_name = registry.tmux_session_for(platform, pid)
-    if not session_name:
-        return {"ok": False, "error": "window is not a LUCID-managed tmux process", "platform": platform, "pid": pid}
+def _local_editor_terminal_launch(payload: dict) -> dict:
+    cwd = str(payload.get("cwd") or Path.home())
+    cwd_path = Path(cwd).expanduser()
+    if not cwd_path.exists():
+        raise HTTPException(400, f"cwd does not exist: {cwd}")
+    if not cwd_path.is_dir():
+        raise HTTPException(400, f"cwd is not a directory: {cwd}")
+    session_name = f"{EDITOR_TERMINAL_TMUX_PREFIX}{uuid.uuid4().hex[:10]}"
+    command = f"cd {shlex.quote(str(cwd_path))} && exec bash -l"
+    proc = _run_tmux(["tmux", "new-session", "-d", "-s", session_name, command])
+    title = _clean_display_name(payload.get("title") or payload.get("name")) or "Bash"
+    return {
+        "ok": proc.returncode == 0,
+        "tmux_session": session_name,
+        "title": title,
+        "cwd": str(cwd_path),
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "rc": proc.returncode,
+    }
+
+
+def _local_tmux_terminal(session_name: str, lines: int = 200) -> dict:
     safe_lines = max(20, min(lines, 1000))
     proc = _run_tmux(["tmux", "capture-pane", "-p", "-e", "-t", session_name, "-S", f"-{safe_lines}"])
     if proc.returncode != 0:
         return {"ok": False, "error": proc.stderr.strip() or "tmux capture-pane failed", "tmux_session": session_name}
-    return {"ok": True, "platform": platform, "pid": pid, "tmux_session": session_name, "output": proc.stdout, "ansi": True}
+    return {"ok": True, "tmux_session": session_name, "output": proc.stdout, "ansi": True}
+
+
+def _local_tmux_cwd(session_name: str) -> dict:
+    proc = _run_tmux(["tmux", "display-message", "-p", "-t", session_name, "#{pane_current_path}"])
+    if proc.returncode != 0:
+        return {"ok": False, "error": proc.stderr.strip() or "tmux display-message failed", "tmux_session": session_name}
+    cwd = proc.stdout.strip()
+    if not cwd:
+        return {"ok": False, "error": "tmux did not report a current directory", "tmux_session": session_name}
+    return {"ok": True, "tmux_session": session_name, "cwd": cwd}
+
+
+def _local_editor_terminal(session_name: str, lines: int = 200) -> dict:
+    _require_editor_terminal_session(session_name)
+    return _local_tmux_terminal(session_name, lines=lines)
+
+
+def _local_editor_terminal_cwd(session_name: str) -> dict:
+    _require_editor_terminal_session(session_name)
+    return _local_tmux_cwd(session_name)
+
+
+def _local_editor_terminal_close(session_name: str) -> dict:
+    _require_editor_terminal_session(session_name)
+    proc = _run_tmux(["tmux", "kill-session", "-t", session_name])
+    return {
+        "ok": proc.returncode == 0,
+        "tmux_session": session_name,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "rc": proc.returncode,
+        "error": "" if proc.returncode == 0 else (proc.stderr.strip() or "tmux kill-session failed"),
+    }
+
+
+def _local_window_terminal(platform: str, pid: int, lines: int = 200) -> dict:
+    session_name = registry.tmux_session_for(platform, pid)
+    if not session_name:
+        return {"ok": False, "error": "window is not a LUCID-managed tmux process", "platform": platform, "pid": pid}
+    data = _local_tmux_terminal(session_name, lines=lines)
+    data.update({"platform": platform, "pid": pid})
+    return data
+
+
+def _local_window_cwd(platform: str, pid: int) -> dict:
+    session_name = registry.tmux_session_for(platform, pid)
+    if not session_name:
+        return {"ok": False, "error": "window is not a LUCID-managed tmux process", "platform": platform, "pid": pid}
+    data = _local_tmux_cwd(session_name)
+    data.update({"platform": platform, "pid": pid})
+    return data
 
 
 def _local_window_terminal_input(platform: str, pid: int, payload: dict) -> dict:
@@ -1192,15 +1277,36 @@ def _agent_terminal_ws_connect_args(
     return url, headers, proxy
 
 
-async def _local_terminal_ws(websocket: WebSocket, platform: str, pid: int, cols: int = 80, rows: int = 24) -> None:
+def _agent_editor_terminal_ws_connect_args(
+    node: nodes.NodeConfig,
+    session_name: str,
+    cols: int = 80,
+    rows: int = 24,
+) -> tuple[str, dict[str, str], bool | None]:
+    parsed = urllib.parse.urlparse(node.base_url)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    query = urllib.parse.urlencode({"cols": max(20, min(int(cols or 80), 400)), "rows": max(5, min(int(rows or 24), 200))})
+    path = f"/agent/v1/editor-terminals/{urllib.parse.quote(session_name)}/terminal/ws"
+    url = urllib.parse.urlunparse((scheme, parsed.netloc, path, "", query, ""))
+    headers = {"Authorization": f"Bearer {node.auth_token}"} if node.auth_token else {}
+    proxy = None if node.auto_tunnel or nodes._is_loopback_url(node.base_url) else True
+    return url, headers, proxy
+
+
+async def _local_tmux_terminal_ws(
+    websocket: WebSocket,
+    session_name: str,
+    cols: int = 80,
+    rows: int = 24,
+    missing_message: str = "tmux session is not available",
+) -> None:
     await websocket.accept()
     if pty is None or fcntl is None or termios is None:
         await websocket.send_text("\r\n[LUCID] local terminal websocket requires POSIX PTY support\r\n")
         await websocket.close(code=1011)
         return
-    session_name = registry.tmux_session_for(platform, pid)
     if not session_name:
-        await websocket.send_text("\r\n[LUCID] window is not a managed tmux process\r\n")
+        await websocket.send_text(f"\r\n[LUCID] {missing_message}\r\n")
         await websocket.close(code=1008)
         return
 
@@ -1272,7 +1378,7 @@ async def _local_terminal_ws(websocket: WebSocket, platform: str, pid: int, cols
         finally:
             loop.call_soon_threadsafe(enqueue, None)
 
-    reader = threading.Thread(target=read_pty, name=f"terminal-ws-{platform}-{pid}", daemon=True)
+    reader = threading.Thread(target=read_pty, name=f"terminal-ws-{session_name}", daemon=True)
     reader.start()
 
     async def pty_to_ws() -> None:
@@ -1326,9 +1432,36 @@ async def _local_terminal_ws(websocket: WebSocket, platform: str, pid: int, cols
                 proc.kill()
 
 
-async def _proxy_terminal_ws(websocket: WebSocket, node: nodes.NodeConfig, platform: str, pid: int, cols: int, rows: int) -> None:
+async def _local_terminal_ws(websocket: WebSocket, platform: str, pid: int, cols: int = 80, rows: int = 24) -> None:
+    session_name = registry.tmux_session_for(platform, pid)
+    await _local_tmux_terminal_ws(
+        websocket,
+        session_name,
+        cols=cols,
+        rows=rows,
+        missing_message="window is not a managed tmux process",
+    )
+
+
+async def _local_editor_terminal_ws(websocket: WebSocket, session_name: str, cols: int = 80, rows: int = 24) -> None:
+    try:
+        _require_editor_terminal_session(session_name)
+    except HTTPException:
+        await websocket.accept()
+        await websocket.send_text("\r\n[LUCID] invalid editor terminal session\r\n")
+        await websocket.close(code=1008)
+        return
+    await _local_tmux_terminal_ws(
+        websocket,
+        session_name,
+        cols=cols,
+        rows=rows,
+        missing_message="editor terminal session is not available",
+    )
+
+
+async def _proxy_agent_ws(websocket: WebSocket, url: str, headers: dict[str, str], proxy: bool | None) -> None:
     await websocket.accept()
-    url, headers, proxy = _agent_terminal_ws_connect_args(node, platform, pid, cols=cols, rows=rows)
     try:
         async with websocket_connect(
             url,
@@ -1367,6 +1500,16 @@ async def _proxy_terminal_ws(websocket: WebSocket, node: nodes.NodeConfig, platf
     finally:
         with contextlib.suppress(Exception):
             await websocket.close()
+
+
+async def _proxy_terminal_ws(websocket: WebSocket, node: nodes.NodeConfig, platform: str, pid: int, cols: int, rows: int) -> None:
+    url, headers, proxy = _agent_terminal_ws_connect_args(node, platform, pid, cols=cols, rows=rows)
+    await _proxy_agent_ws(websocket, url, headers, proxy)
+
+
+async def _proxy_editor_terminal_ws(websocket: WebSocket, node: nodes.NodeConfig, session_name: str, cols: int, rows: int) -> None:
+    url, headers, proxy = _agent_editor_terminal_ws_connect_args(node, session_name, cols=cols, rows=rows)
+    await _proxy_agent_ws(websocket, url, headers, proxy)
 
 
 async def _watcher() -> None:
@@ -1444,27 +1587,35 @@ def api_nodes() -> dict:
 def api_node_local_enable() -> dict:
     if not _is_hub_mode():
         raise HTTPException(400, "local node can only be enabled from hub mode")
-    install = _deploy_local_agent()
-    node = _local_agent_node_from_install(install)
-    nodes.write_node_config(node)
-    nodes.invalidate_snapshot_cache(node.id)
-    _refresh_snapshot_cache()
-    return {
-        "ok": True,
-        "node": _public_node(node),
-        "install": install,
-        "config_path": str(nodes.CONFIG_PATH),
-    }
+    try:
+        install = _deploy_local_agent()
+        node = _local_agent_node_from_install(install)
+        nodes.write_node_config(node)
+        nodes.invalidate_snapshot_cache(node.id)
+        _refresh_snapshot_cache()
+        return {
+            "ok": True,
+            "node": _public_node(node),
+            "install": install,
+            "config_path": str(nodes.CONFIG_PATH),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"failed to enable local node: {e}") from e
 
 
 @app.delete("/api/nodes/{node_id}")
 def api_node_delete(node_id: str) -> dict:
-    # For local node, stop the local agent process first
-    if node_id == "local":
-        _stop_local_agent()
     try:
+        # Delete only removes hub config. For the local agent, stop the process
+        # first so a deleted local node does not keep reporting windows.
+        if node_id == "local":
+            _stop_local_agent()
         result = nodes.remove_node_config(node_id)
-    except OSError as e:
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(500, f"failed to delete node {node_id}: {e}") from e
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "delete failed"))
@@ -1479,18 +1630,23 @@ def api_node_remove(node_id: str) -> dict:
         raise HTTPException(404, f"unknown node {node_id}")
     local_ok = False
     remote_ok = False
-    if _is_local_enabled_node(node):
-        _cleanup_local_agent_dir(node)
-        local_ok = True
-    elif node.kind == "ssh":
-        cleanup_result = ssh_deploy.cleanup_remote_node(node_id)
-        remote_ok = cleanup_result.get("ok", False)
-        if not remote_ok:
-            msg = cleanup_result.get("error", "unknown")
-            raise HTTPException(502, f"remote cleanup failed: {msg}")
+    try:
+        if _is_local_enabled_node(node):
+            _cleanup_local_agent_dir(node)
+            local_ok = True
+        elif node.kind == "ssh":
+            cleanup_result = cleanup_remote_node(node_id)
+            remote_ok = cleanup_result.get("ok", False)
+            if not remote_ok:
+                msg = cleanup_result.get("error", "unknown")
+                raise HTTPException(502, f"remote cleanup failed: {msg}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"failed to cleanup node {node_id}: {e}") from e
     try:
         result = nodes.remove_node_config(node_id)
-    except OSError as e:
+    except Exception as e:
         raise HTTPException(500, f"failed to remove node config: {e}") from e
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "remove config failed"))
@@ -1865,6 +2021,8 @@ def api_node_deploy(payload: dict = Body(...)) -> dict:
         return result
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    except TypeError as e:
+        raise HTTPException(500, f"TypeError: {e}") from e
     except AuthenticationException as e:
         raise HTTPException(401, f"ssh authentication failed for {payload.get('user')}@{payload.get('host')}") from e
     except NoValidConnectionsError as e:
@@ -1879,16 +2037,29 @@ def api_node_deploy_start(payload: dict = Body(...)) -> dict:
         req = _deploy_request_from_payload(payload)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    return _start_deploy_job(req)
+    except (TypeError, RuntimeError, OSError) as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}") from e
+    try:
+        return _start_deploy_job(req)
+    except (TypeError, RuntimeError, OSError) as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}") from e
 
 
 @app.post("/api/nodes/deploy/sync-all")
 def api_node_deploy_sync_all() -> dict:
     jobs: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
-    for node in nodes.load_config(force=True).nodes:
+    try:
+        configured_nodes = nodes.load_config(force=True).nodes
+    except Exception as e:
+        raise HTTPException(500, f"failed to load node config: {e}") from e
+    for node in configured_nodes:
         if _is_local_enabled_node(node):
-            job = _start_local_deploy_job()
+            try:
+                job = _start_local_deploy_job()
+            except Exception as e:
+                skipped.append({"id": node.id or "", "reason": f"failed to start local sync job: {e}"})
+                continue
             job["node_id"] = node.id
             job["node_name"] = node.display_name
             jobs.append(job)
@@ -1901,7 +2072,11 @@ def api_node_deploy_sync_all() -> dict:
         except (ValueError, TypeError) as e:
             skipped.append({"id": node.id or "", "reason": str(e)})
             continue
-        job = _start_deploy_job(req)
+        try:
+            job = _start_deploy_job(req)
+        except Exception as e:
+            skipped.append({"id": node.id or "", "reason": f"failed to start sync job: {e}"})
+            continue
         job["node_id"] = node.id
         job["node_name"] = node.display_name
         jobs.append(job)
@@ -2065,6 +2240,46 @@ def api_node_terminal(node_id: str, platform: str, pid: int, lines: int = 200) -
     return nodes.forward(node_id, "GET", f"/agent/v1/windows/{platform}/{pid}/terminal?lines={lines}")
 
 
+@app.get("/api/nodes/{node_id}/windows/{platform}/{pid}/cwd")
+def api_node_window_cwd(node_id: str, platform: str, pid: int) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _local_window_cwd(platform, pid)
+    return nodes.forward(node_id, "GET", f"/agent/v1/windows/{platform}/{pid}/cwd")
+
+
+@app.post("/api/nodes/{node_id}/editor-terminals")
+def api_node_editor_terminal_launch(node_id: str, payload: dict = Body(...)) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _local_editor_terminal_launch(payload)
+    return nodes.forward(node_id, "POST", "/agent/v1/editor-terminals", payload)
+
+
+@app.get("/api/nodes/{node_id}/editor-terminals/{tmux_session}/terminal")
+def api_node_editor_terminal(node_id: str, tmux_session: str, lines: int = 200) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _local_editor_terminal(tmux_session, lines=lines)
+    return nodes.forward(node_id, "GET", f"/agent/v1/editor-terminals/{urllib.parse.quote(tmux_session)}/terminal?lines={lines}")
+
+
+@app.get("/api/nodes/{node_id}/editor-terminals/{tmux_session}/cwd")
+def api_node_editor_terminal_cwd(node_id: str, tmux_session: str) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _local_editor_terminal_cwd(tmux_session)
+    return nodes.forward(node_id, "GET", f"/agent/v1/editor-terminals/{urllib.parse.quote(tmux_session)}/cwd")
+
+
+@app.post("/api/nodes/{node_id}/editor-terminals/{tmux_session}/close")
+def api_node_editor_terminal_close(node_id: str, tmux_session: str) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _local_editor_terminal_close(tmux_session)
+    return nodes.forward(node_id, "POST", f"/agent/v1/editor-terminals/{urllib.parse.quote(tmux_session)}/close")
+
+
 @app.post("/api/nodes/{node_id}/windows/{platform}/{pid}/terminal/input")
 def api_node_terminal_input(node_id: str, platform: str, pid: int, payload: dict = Body(...)) -> dict:
     node = _configured_node(node_id)
@@ -2089,6 +2304,21 @@ async def api_node_terminal_ws(websocket: WebSocket, node_id: str, platform: str
         return
     nodes.ensure_tunnels()
     await _proxy_terminal_ws(websocket, node, platform, pid, cols, rows)
+
+
+@app.websocket("/api/nodes/{node_id}/editor-terminals/{tmux_session}/terminal/ws")
+async def api_node_editor_terminal_ws(websocket: WebSocket, node_id: str, tmux_session: str, cols: int = 80, rows: int = 24) -> None:
+    node = nodes.node_by_id(node_id)
+    if not node:
+        await websocket.accept()
+        await websocket.send_text(f"\r\n[LUCID] unknown node {node_id}\r\n")
+        await websocket.close(code=1008)
+        return
+    if node.kind == "local":
+        await _local_editor_terminal_ws(websocket, tmux_session, cols=cols, rows=rows)
+        return
+    nodes.ensure_tunnels()
+    await _proxy_editor_terminal_ws(websocket, node, tmux_session, cols, rows)
 
 
 @app.post("/api/nodes/{node_id}/windows/{platform}/{pid}/review")
@@ -2307,6 +2537,12 @@ def agent_window_terminal(platform: str, pid: int, lines: int = 200, authorizati
     return _local_window_terminal(platform, pid, lines=lines)
 
 
+@app.get("/agent/v1/windows/{platform}/{pid}/cwd")
+def agent_window_cwd(platform: str, pid: int, authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _local_window_cwd(platform, pid)
+
+
 @app.post("/agent/v1/windows/{platform}/{pid}/terminal/input")
 def agent_window_terminal_input(platform: str, pid: int, payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
     _require_agent_auth(authorization)
@@ -2321,6 +2557,40 @@ async def agent_window_terminal_ws(websocket: WebSocket, platform: str, pid: int
         await websocket.close(code=1008)
         return
     await _local_terminal_ws(websocket, platform, pid, cols=cols, rows=rows)
+
+
+@app.post("/agent/v1/editor-terminals")
+def agent_editor_terminal_launch(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _local_editor_terminal_launch(payload)
+
+
+@app.get("/agent/v1/editor-terminals/{tmux_session}/terminal")
+def agent_editor_terminal(tmux_session: str, lines: int = 200, authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _local_editor_terminal(tmux_session, lines=lines)
+
+
+@app.get("/agent/v1/editor-terminals/{tmux_session}/cwd")
+def agent_editor_terminal_cwd(tmux_session: str, authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _local_editor_terminal_cwd(tmux_session)
+
+
+@app.post("/agent/v1/editor-terminals/{tmux_session}/close")
+def agent_editor_terminal_close(tmux_session: str, authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _local_editor_terminal_close(tmux_session)
+
+
+@app.websocket("/agent/v1/editor-terminals/{tmux_session}/terminal/ws")
+async def agent_editor_terminal_ws(websocket: WebSocket, tmux_session: str, cols: int = 80, rows: int = 24) -> None:
+    try:
+        _require_agent_auth(websocket.headers.get("authorization"))
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+    await _local_editor_terminal_ws(websocket, tmux_session, cols=cols, rows=rows)
 
 
 @app.post("/agent/v1/windows/{platform}/{pid}/review")
