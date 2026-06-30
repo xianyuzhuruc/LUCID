@@ -54,6 +54,11 @@ Click **Terminal** on any session card to open a live terminal embedded in the
 dashboard. You can type directly, copy/paste, send control sequences (Ctrl-C,
 Enter), scroll through history, and drag-and-drop file paths from the sidebar.
 
+From an open terminal, click **New Bash** to start a Bash shell in the same
+current directory. The new shell opens as an **Editor** tab, so files and
+ad-hoc Bash sessions are managed together in one tab strip instead of creating
+another session card.
+
 ### File Browser & Text Editor
 
 - **Browse** directories on any connected server.
@@ -61,6 +66,7 @@ Enter), scroll through history, and drag-and-drop file paths from the sidebar.
 - **Create** directories.
 - **Edit** text files with the built-in editor, with change tracking.
 - **Delete** files directly from the editor.
+- **Manage Bash tabs** launched from an active terminal alongside editor tabs.
 
 In Zoom mode you can switch between the file browser and a terminal list view
 that lets you jump between active sessions without leaving the zoom.
@@ -93,7 +99,8 @@ its name, connection details, health status, and window count.
 - **Delete** — Remove the node from your local config without touching the
   remote server.
 - **Remove** — Kill the remote agent and delete its files, then remove the
-  local config. Irreversible.
+  local config. Irreversible; requires SSH access to the node and refuses
+  obviously unsafe remote directories such as `/`, `$HOME`, or system paths.
 - **Click a node card** to select it as the default target in the Launch panel.
 
 ### Launch Managed Sessions
@@ -184,6 +191,12 @@ server. To use a different port:
 LUCID_PORT=21894 bash run.sh
 ```
 
+To keep the hub running in the background:
+
+```bash
+nohup bash run.sh > run.log &
+```
+
 ### Add Your Local Machine
 
 The hub starts without monitoring any sessions by default. To include the
@@ -218,10 +231,16 @@ ssh user@server   # verify no password prompt
 Then deploy from the Nodes panel:
 
 1. Fill in **node id**, **host**, **SSH user**, and **SSH port**.
-2. Leave **agent port** empty — LUCID picks a free port automatically.
-3. Click **Deploy / update agent**.
+2. Enter a **password** only when first-time key setup is needed.
+3. Leave **agent port** empty — LUCID picks a free port automatically.
+4. Keep **remote dir** as `~/.lucid/agent` unless you need a custom install
+   location.
+5. Click **Deploy / update agent** and watch the queued deploy status.
 
 Saved SSH connections appear as clickable shortcuts in the **Recent SSH** list.
+Use **Sync all nodes** after updating the checkout when remote agents need the
+new backend/API code. Hub-only changes only require restarting the hub and
+refreshing the browser.
 
 ### Manual Agent Setup
 
