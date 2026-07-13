@@ -112,6 +112,9 @@ DEPLOY_JOBS: dict[str, DeployJob] = {}
 DEPLOY_JOBS_LOCK = threading.Lock()
 DEPLOY_JOB_LIMIT = 20
 LOCAL_AGENT_READY_TIMEOUT_SECONDS = int(os.environ.get("LUCID_LOCAL_AGENT_READY_TIMEOUT_SECONDS", "900"))
+UPLOAD_CHUNK_DIR = nodes.STATE_DIR / "upload-chunks"
+UPLOAD_CHUNK_TTL_SECONDS = int(os.environ.get("LUCID_UPLOAD_CHUNK_TTL_SECONDS", "21600"))
+UPLOAD_CHUNK_MAX_BYTES = int(os.environ.get("LUCID_UPLOAD_CHUNK_MAX_BYTES", str(1024 * 1024)))
 DEPLOY_STEP_ACTIONS = {
     "queued": "Waiting for the backend worker to start.",
     "validate": "Checking the request fields.",
@@ -684,14 +687,18 @@ def _local_path_create(payload: dict) -> dict:
         raise HTTPException(400, f"create directory failed for {directory or Path.home()}: {e}") from e
 
 
+def _decode_upload_content(payload: dict) -> bytes:
+    encoded = str(payload.get("content_base64") or "")
+    try:
+        return base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise HTTPException(400, "content_base64 is not valid base64") from e
+
+
 def _local_file_upload(payload: dict) -> dict:
     directory = str(payload.get("directory") or "")
     name = str(payload.get("name") or "")
-    encoded = str(payload.get("content_base64") or "")
-    try:
-        content = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError) as e:
-        raise HTTPException(400, "content_base64 is not valid base64") from e
+    content = _decode_upload_content(payload)
     try:
         return path_browser.save_uploaded_file(directory or None, name, content)
     except FileNotFoundError as e:
@@ -706,6 +713,141 @@ def _local_file_upload(payload: dict) -> dict:
         raise HTTPException(400, str(e)) from e
     except OSError as e:
         raise HTTPException(400, f"file upload failed for {directory or Path.home()}: {e}") from e
+
+
+def _clean_upload_id(raw_id: object) -> str:
+    upload_id = str(raw_id or "").strip()
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+    if not upload_id or len(upload_id) > 128 or any(ch not in allowed for ch in upload_id):
+        raise HTTPException(400, "invalid upload_id")
+    return upload_id
+
+
+def _payload_int(payload: dict, key: str, default: int | None = None) -> int:
+    raw = payload.get(key, default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, f"{key} must be an integer") from e
+
+
+def _upload_chunk_paths(upload_id: str) -> tuple[Path, Path]:
+    UPLOAD_CHUNK_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return UPLOAD_CHUNK_DIR / f"{upload_id}.part", UPLOAD_CHUNK_DIR / f"{upload_id}.json"
+
+
+def _cleanup_upload_chunks() -> None:
+    try:
+        UPLOAD_CHUNK_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError:
+        return
+    cutoff = time.time() - UPLOAD_CHUNK_TTL_SECONDS
+    try:
+        paths = list(UPLOAD_CHUNK_DIR.iterdir())
+    except OSError:
+        return
+    for path in paths:
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            pass
+
+
+def _receive_upload_chunk(payload: dict) -> dict:
+    _cleanup_upload_chunks()
+    upload_id = _clean_upload_id(payload.get("upload_id"))
+    chunk_index = _payload_int(payload, "chunk_index")
+    chunk_total = _payload_int(payload, "chunk_total")
+    offset = _payload_int(payload, "offset")
+    file_size = _payload_int(payload, "file_size")
+    if chunk_total <= 0:
+        raise HTTPException(400, "chunk_total must be greater than zero")
+    if chunk_index < 0 or chunk_index >= chunk_total:
+        raise HTTPException(400, "chunk_index is out of range")
+    if offset < 0 or file_size < 0:
+        raise HTTPException(400, "offset and file_size must be non-negative")
+    content = _decode_upload_content(payload)
+    if len(content) > UPLOAD_CHUNK_MAX_BYTES:
+        raise HTTPException(413, f"upload chunk exceeds {UPLOAD_CHUNK_MAX_BYTES} bytes")
+
+    directory = str(payload.get("directory") or "")
+    name = str(payload.get("name") or "")
+    part_path, meta_path = _upload_chunk_paths(upload_id)
+    if chunk_index == 0:
+        meta = {
+            "directory": directory,
+            "name": name,
+            "file_size": file_size,
+            "chunk_total": chunk_total,
+            "created_at": time.time(),
+        }
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        part_path.write_bytes(b"")
+    else:
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except FileNotFoundError as e:
+            raise HTTPException(409, "upload chunk state was not found") from e
+        except (json.JSONDecodeError, OSError) as e:
+            raise HTTPException(409, "upload chunk state is invalid") from e
+        if (
+            meta.get("directory") != directory
+            or meta.get("name") != name
+            or int(meta.get("file_size", -1)) != file_size
+            or int(meta.get("chunk_total", -1)) != chunk_total
+        ):
+            raise HTTPException(409, "upload chunk metadata does not match")
+
+    try:
+        current_size = part_path.stat().st_size
+    except FileNotFoundError as e:
+        raise HTTPException(409, "upload chunk data was not found") from e
+    if current_size != offset:
+        raise HTTPException(409, f"upload chunk offset mismatch: expected {current_size}, got {offset}")
+
+    with part_path.open("ab") as f:
+        f.write(content)
+    received = current_size + len(content)
+    complete = chunk_index == chunk_total - 1
+    if received > file_size:
+        raise HTTPException(400, "upload chunk exceeds file_size")
+    if complete and received != file_size:
+        raise HTTPException(400, f"upload is incomplete: received {received} of {file_size} bytes")
+
+    result = {
+        "ok": True,
+        "partial": not complete,
+        "upload_id": upload_id,
+        "received": received,
+        "size": file_size,
+        "name": name,
+        "directory": directory,
+    }
+    if complete:
+        result["_part_path"] = str(part_path)
+        result["_meta_path"] = str(meta_path)
+    return result
+
+
+def _finish_node_upload_chunk(node_id: str, node: nodes.NodeConfig, chunk: dict) -> dict:
+    part_path = Path(str(chunk.get("_part_path") or ""))
+    meta_path = Path(str(chunk.get("_meta_path") or ""))
+    try:
+        content = part_path.read_bytes()
+        payload = {
+            "directory": str(chunk.get("directory") or ""),
+            "name": str(chunk.get("name") or ""),
+            "content_base64": base64.b64encode(content).decode("ascii"),
+        }
+        if node.kind == "local":
+            return _local_file_upload(payload)
+        return nodes.forward(node_id, "POST", "/agent/v1/files/upload", payload)
+    finally:
+        with contextlib.suppress(OSError):
+            part_path.unlink()
+        with contextlib.suppress(OSError):
+            meta_path.unlink()
 
 
 def _deploy_local_agent() -> dict:
@@ -851,6 +993,7 @@ def _write_local_agent_env(agent_dir: Path, agent_port: int) -> None:
         f"LUCID_PORT={agent_port}",
         f"LUCID_PYTHON={shlex.quote(sys.executable)}",
         "LUCID_NO_VENV=1",
+        "LUCID_RELOAD=0",
         'LUCID_RUNTIME_DIR="$PWD/.lucid-runtime"',
         'PATH="$PWD/.lucid-runtime/env/bin:$PATH"',
         "NO_PROXY=127.0.0.1,localhost",
@@ -1830,6 +1973,15 @@ def api_node_file_upload(node_id: str, payload: dict = Body(...)) -> dict:
     if node.kind == "local":
         return _local_file_upload(payload)
     return nodes.forward(node_id, "POST", "/agent/v1/files/upload", payload)
+
+
+@app.post("/api/nodes/{node_id}/files/upload/chunk")
+def api_node_file_upload_chunk(node_id: str, payload: dict = Body(...)) -> dict:
+    node = _configured_node(node_id)
+    chunk = _receive_upload_chunk(payload)
+    if chunk.get("partial"):
+        return {k: v for k, v in chunk.items() if not k.startswith("_")}
+    return _finish_node_upload_chunk(node_id, node, chunk)
 
 
 def _deploy_request_from_payload(payload: dict) -> DeployRequest:

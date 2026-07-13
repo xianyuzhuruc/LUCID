@@ -823,7 +823,7 @@ def forward(node_id: str, method: str, path: str, payload: Optional[dict] = None
     if node.kind == "local":
         return {"ok": False, "error": "local forwarding path is not implemented for this action", "node_id": node_id}
     try:
-        timeout_ms = 15000 if "/timeline" in path else 30000 if "/skills" in path else 5000
+        timeout_ms = 60000 if "/files/upload" in path else 15000 if "/timeline" in path else 30000 if "/skills" in path else 5000
         if method in ("POST", "PATCH"):
             return agent_post(node, path, payload=payload, timeout_ms=timeout_ms, method=method)
         if method == "DELETE":

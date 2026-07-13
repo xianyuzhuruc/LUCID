@@ -966,6 +966,7 @@ def _write_remote_env(
         f"LUCID_AGENT_TOKEN={shlex.quote(token)}",
         f"LUCID_PYTHON={shlex.quote(remote_python.command)}",
         "LUCID_NO_VENV=1",
+        "LUCID_RELOAD=0",
         "LUCID_SKIP_SYSTEM_DEPS=1",
         "NO_PROXY=127.0.0.1,localhost",
         "no_proxy=127.0.0.1,localhost",
