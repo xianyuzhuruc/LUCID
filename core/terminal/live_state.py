@@ -22,6 +22,8 @@ _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _ERROR_RE = re.compile(r"\berror\b", re.IGNORECASE)
 _YES_RE = re.compile(r"\byes\b", re.IGNORECASE)
 _NO_RE = re.compile(r"\bno\b", re.IGNORECASE)
+_PROMPT_RE = re.compile(r"^[ \t]*(?:›|>|\$)[ \t]*$", re.MULTILINE)
+_CODEX_HEADER_RE = re.compile(r"^[ \t]*(?:gpt-[^\n]*|codex[^\n]*)\s+·\s+", re.IGNORECASE | re.MULTILINE)
 
 
 def capture_tmux_pane(session_name: str, lines: int = CAPTURE_TAIL_LINES, timeout: float = 2.0) -> Optional[str]:
@@ -51,13 +53,21 @@ def tail_capture(text: str | None, lines: int = CAPTURE_TAIL_LINES) -> str | Non
     return "\n".join(clean.split("\n")[-lines:])
 
 
-def classify_capture_diff(current_capture: str | None, previous_capture: str | None, *, captured_at_ms: int | None = None) -> dict:
+def classify_capture_diff(
+    current_capture: str | None,
+    previous_capture: str | None,
+    *,
+    captured_at_ms: int | None = None,
+    platform: str | None = None,
+) -> dict:
     """Classify Codex/Claude state using only current vs previous tmux tails.
 
     Rules:
     - no current capture means Waiting, because the managed terminal cannot be inspected;
     - first successful capture or any changed tail means Working;
     - unchanged tail with ``error`` or both ``yes`` and ``no`` means Waiting;
+    - for Codex, a visible prompt/status header takes precedence over stale
+      update errors in the scrollback;
     - unchanged tail without those markers means Stalled.
     """
     now_ms = int(captured_at_ms if captured_at_ms is not None else time.time() * 1000)
@@ -65,13 +75,20 @@ def classify_capture_diff(current_capture: str | None, previous_capture: str | N
         return _state_payload("waiting", now_ms)
     if previous_capture is None or current_capture != previous_capture:
         return _state_payload("working", now_ms)
-    if _waiting_marker(current_capture):
+    if _waiting_marker(current_capture, platform=platform):
         return _state_payload("waiting", now_ms)
     return _state_payload("stalled", now_ms)
 
 
-def _waiting_marker(capture: str) -> bool:
-    return bool(_ERROR_RE.search(capture) or (_YES_RE.search(capture) and _NO_RE.search(capture)))
+def _waiting_marker(capture: str, *, platform: str | None = None) -> bool:
+    if _YES_RE.search(capture) and _NO_RE.search(capture):
+        return True
+    # Update/install errors in the scrollback are historical output. Once the
+    # application has returned to its prompt/header, the live terminal is
+    # usable and must not remain red because of that old message.
+    if platform == "codex" and (_PROMPT_RE.search(capture) or _CODEX_HEADER_RE.search(capture)):
+        return False
+    return bool(_ERROR_RE.search(capture))
 
 
 def _state_payload(triage: str, captured_at_ms: int) -> dict:

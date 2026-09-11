@@ -23,9 +23,22 @@
   .triage-bash { background-color: #64748b; }
   .triage-completed { background-color: #3b82f6; }
   pre { white-space: pre-wrap; word-break: break-all; }
-  .terminal-frame { min-height: 30rem; height: 100%; background: #020617; touch-action: none; }
-  .terminal-frame .xterm { height: 100%; padding: 10px; }
-  .terminal-frame .xterm-screen { height: 100%; }
+  .terminal-panel-content {
+    height: max(12rem, calc(100vh - 14rem));
+    height: max(12rem, calc(100dvh - 14rem));
+    min-height: 0;
+    min-width: 0;
+  }
+  .terminal-sidebar { width: clamp(11rem, 28vw, 19rem); }
+  .terminal-frame {
+    width: 100%;
+    min-height: 0;
+    height: 100%;
+    background: #020617;
+    touch-action: none;
+  }
+  .terminal-frame .xterm { width: 100%; height: 100%; padding: 10px; }
+  .terminal-frame .xterm-screen { width: 100%; height: 100%; }
   .terminal-frame .xterm-viewport { background-color: #020617 !important; }
   .toast-enter { animation: slideIn .3s ease-out; }
   @keyframes slideIn { from{transform:translateY(1rem);opacity:0} to{transform:translateY(0);opacity:1} }
@@ -209,6 +222,9 @@
       </template>
     </select>
     <button @click="showSettings = true" class="text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 text-lg leading-none" title="Settings">⚙</button>
+    <button @click="signOut()"
+            class="text-xs border border-gray-200 dark:border-gray-600 px-2 py-1 rounded text-gray-500 dark:text-gray-400 hover:border-red-300 hover:text-red-600 dark:hover:border-red-700 dark:hover:text-red-400 transition"
+            title="Sign out of LUCID">Sign out</button>
   </div>
 </header>
 
@@ -809,9 +825,10 @@
   <!-- ===== Managed terminal panel ===== -->
   <div x-ref="terminalPanel"
        x-show="terminalWindow"
-       :class="terminalZoom ? 'fixed top-9 left-0 right-0 bottom-0 z-40 bg-white dark:bg-gray-900 p-3 flex flex-col' : 'mt-6 scroll-mt-24 bg-white dark:bg-gray-800 dark:border-gray-700 rounded-xl shadow border p-5'"
+       class="min-w-0 max-w-full"
+       :class="terminalZoom ? 'fixed top-9 left-0 right-0 bottom-0 z-40 flex min-h-0 min-w-0 flex-col overflow-hidden bg-white p-3 dark:bg-gray-900' : 'mt-6 scroll-mt-24 min-w-0 overflow-hidden rounded-xl border bg-white p-5 shadow dark:border-gray-700 dark:bg-gray-800'"
        x-transition>
-    <div class="flex items-center justify-between mb-3" :class="terminalZoom ? 'mb-1 gap-2' : ''">
+    <div class="flex min-w-0 flex-wrap items-center justify-between gap-2 mb-3" :class="terminalZoom ? 'mb-1' : ''">
       <div class="min-w-0 flex items-center gap-2" :class="terminalZoom ? 'flex-1 overflow-hidden' : ''">
         <div class="min-w-0">
           <h2 class="font-semibold text-sm truncate">
@@ -857,7 +874,7 @@
           </div>
         </div>
       </div>
-      <div class="flex items-center gap-2 shrink-0">
+      <div class="flex min-w-0 flex-wrap items-center justify-end gap-2">
         <button @click="launchBashFromTerminal()"
                 :disabled="terminalBashLaunching || !terminalWindow"
                 title="Start a Bash tab in the current directory"
@@ -922,8 +939,8 @@
       </div>
     </div>
     <!-- sidebar + content area -->
-    <div class="flex gap-0"
-         :class="terminalZoom ? 'flex-1 min-h-0' : 'lg:h-[40rem]'">
+    <div class="flex min-h-0 min-w-0 gap-0"
+         :class="terminalZoom ? 'flex-1' : 'terminal-panel-content'">
       <!-- sidebar -->
       <aside x-show="terminalSidebarOpen"
              x-transition:enter="transition ease-out duration-200"
@@ -932,8 +949,7 @@
              x-transition:leave="transition ease-in duration-150"
              x-transition:leave-start="opacity-100 translate-x-0"
              x-transition:leave-end="opacity-0 -translate-x-4"
-             class="w-[19rem] shrink-0 flex flex-col overflow-hidden rounded-l border-y border-l border-gray-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-800"
-             :class="terminalZoom ? 'h-full' : 'min-h-[30rem] lg:h-full'">
+             class="terminal-sidebar h-full min-h-0 shrink-0 flex flex-col overflow-hidden rounded-l border-y border-l border-gray-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-800">
         <!-- sidebar view toggle (zoom only) -->
         <div x-show="terminalZoom" class="flex items-center bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
           <button @click="sidebarView = 'files'"
@@ -1058,7 +1074,7 @@
       <!-- tab content area -->
       <div class="flex-1 min-w-0 flex flex-col">
         <!-- terminal -->
-        <div x-show="terminalPanelTab === 'terminal'" class="terminal-frame flex-1 min-w-0 rounded-r lg:h-full"
+        <div x-show="terminalPanelTab === 'terminal'" class="terminal-frame flex-1 min-h-0 min-w-0 rounded-r"
              x-ref="terminalOutput"
              :class="terminalDropActive ? 'ring-2 ring-blue-300' : ''"
              @dragover.prevent="handleTerminalDragOver($event)"
@@ -1373,13 +1389,16 @@
             </div>
           </div>
           <div class="flex gap-1 shrink-0" @click.stop>
-            <button x-show="s.is_alive" @click="resumeSession(s)"
+            <button x-show="!isHistorySessionActive(s)" @click="deleteHistorySession(s)"
+                    class="text-xs border border-red-200 dark:border-red-900 bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 px-2 py-0.5 rounded hover:bg-red-50 dark:hover:bg-red-900/30">
+              Delete</button>
+            <button x-show="isHistorySessionActive(s)" @click="resumeSession(s)"
                     class="text-xs border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
               Focus</button>
-            <button x-show="!s.is_alive" @click="resumeSession(s)"
+            <button x-show="!isHistorySessionActive(s)" @click="resumeSession(s)"
                     class="text-xs border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
               Resume</button>
-            <button x-show="!s.is_alive" @click="forkHistorySession(s)"
+            <button x-show="!isHistorySessionActive(s)" @click="forkHistorySession(s)"
                     class="text-xs border border-green-200 dark:border-green-800 bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 px-2 py-0.5 rounded hover:bg-green-50 dark:hover:bg-green-900/30">
               Fork</button>
           </div>
@@ -1445,6 +1464,8 @@ function fuzzyMatch(query, haystack) {
 
 function superCliTerminal() {
   const UPLOAD_CHUNK_SIZE = 256 * 1024;
+  const TERMINAL_UI_STORAGE_KEY = 'lucid-terminal-ui-v1';
+  const NODE_ID_COLLATOR = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
   const SYNTAX_DEFS = {
     md: { flags: 'm', patterns: [
       { regex: /```[\s\S]*?```/, cls: 'syn-string' },
@@ -1707,11 +1728,8 @@ function superCliTerminal() {
     terminalResizeObserver: null,
     terminalWindowResizeHandler: null,
     terminalResizeTimer: null,
-    terminalResizeReconnectTimer: null,
-    terminalResizePendingReconnect: false,
+    terminalResizeFrame: null,
     terminalLastResizeSignature: '',
-    terminalLastReconnectResizeSignature: '',
-    terminalResizeReconnectCooldownUntil: 0,
     terminalDataDisposable: null,
     terminalCopyHandler: null,
     terminalPasteHandler: null,
@@ -1727,6 +1745,8 @@ function superCliTerminal() {
     editorTerminalFitAddon: null,
     editorTerminalSocket: null,
     editorTerminalResizeObserver: null,
+    editorTerminalResizeTimer: null,
+    editorTerminalResizeFrame: null,
     editorTerminalDataDisposable: null,
     editorTerminalCopyHandler: null,
     editorTerminalPasteHandler: null,
@@ -1741,6 +1761,8 @@ function superCliTerminal() {
     editorTerminalLastResizeSignature: '',
     terminalPanelTab: 'terminal',
     terminalEditorCache: {},
+    terminalUiRestoreAttempted: false,
+    terminalUiPersistenceHandler: null,
     terminalSelection: [],
     terminalSelectionAnchorPath: '',
     fileNameTooltip: { show: false, x: 0, y: 0, text: '', path: '' },
@@ -1898,7 +1920,10 @@ function superCliTerminal() {
 
     init() {
       this.loadTheme();
-      fetch('/api/windows').then(r => r.json()).then(d => this.applySnapshot(d));
+      fetch('/api/windows').then(r => r.json()).then(d => {
+        this.applySnapshot(d);
+        this.restorePersistedTerminalUiState();
+      });
       this.refreshNodes();
       this.loadHistory(1);
       // ?snapshot renders a one-shot static view (no live SSE) — handy for
@@ -1920,9 +1945,14 @@ function superCliTerminal() {
       }
       this._applyHashRoute();
       window.addEventListener('hashchange', () => this._applyHashRoute());
-      this.terminalWindowResizeHandler = () => this.scheduleTerminalFitOnResize(180, { reconnectAfter: true });
+      this.terminalWindowResizeHandler = () => {
+        this.scheduleTerminalFitOnResize(180);
+        this.scheduleEditorTerminalFitOnResize(180);
+      };
       window.addEventListener('resize', this.terminalWindowResizeHandler);
       window.addEventListener('orientationchange', this.terminalWindowResizeHandler);
+      this.terminalUiPersistenceHandler = () => this.persistTerminalUiState();
+      window.addEventListener('pagehide', this.terminalUiPersistenceHandler);
     },
 
     // Deep-link views via URL hash: #search=<q>, #timeline=<sid>
@@ -1946,11 +1976,37 @@ function superCliTerminal() {
       document.documentElement.classList.toggle('dark', this.theme === 'dark');
     },
 
+    async signOut() {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+      } finally {
+        window.location.replace('/login');
+      }
+    },
+
+    orderNodes(rows) {
+      const nodes = Array.isArray(rows) ? [...rows] : [];
+      return nodes.sort((left, right) => {
+        const leftId = String(left?.id || '');
+        const rightId = String(right?.id || '');
+        const leftIsLocal = leftId === 'local';
+        const rightIsLocal = rightId === 'local';
+        if (leftIsLocal !== rightIsLocal) return leftIsLocal ? -1 : 1;
+        if (!!leftId !== !!rightId) return leftId ? -1 : 1;
+        const idOrder = NODE_ID_COLLATOR.compare(leftId, rightId);
+        if (idOrder) return idOrder;
+        return NODE_ID_COLLATOR.compare(
+          String(left?.name || ''),
+          String(right?.name || ''),
+        );
+      });
+    },
+
     applySnapshot(snap) {
       this.windows = snap.windows || [];
       this.counts = snap.counts || this.counts;
       if (snap.nodes) {
-        this.nodes = snap.nodes;
+        this.nodes = this.orderNodes(snap.nodes);
         this.ensureSkillNodeState();
         if (!this.nodes.length) this.launchForm.node_id = '';
         else if (!this.launchForm.node_id) this.launchForm.node_id = this.nodes[0].id;
@@ -1968,10 +2024,11 @@ function superCliTerminal() {
       return `/api/nodes/${nodeId}/windows/${platform}/${w.pid}/${action}`;
     },
 
-    nodeSessionUrl(s, action) {
+    nodeSessionUrl(s, action = '') {
       const nodeId = encodeURIComponent(s.node_id || 'local');
       const platform = encodeURIComponent(s.platform || 'claude');
-      return `/api/nodes/${nodeId}/sessions/${platform}/${encodeURIComponent(s.session_id)}/${action}`;
+      const base = `/api/nodes/${nodeId}/sessions/${platform}/${encodeURIComponent(s.session_id)}`;
+      return action ? `${base}/${action}` : base;
     },
 
     terminalUrl(w, suffix = 'terminal') {
@@ -2545,8 +2602,7 @@ function superCliTerminal() {
       this.terminalPanelTab = tab;
       if (tab === 'terminal') {
         this.$nextTick(() => {
-          this.fitTerminal();
-          this.sendTerminalResize({ onlyIfChanged: true });
+          this.scheduleTerminalFitOnResize(0);
           this.terminal?.focus();
         });
       } else {
@@ -3076,6 +3132,97 @@ function superCliTerminal() {
       };
     },
 
+    terminalWindowIdentity(w) {
+      if (!w) return null;
+      return {
+        key: this.windowKey(w),
+        node_id: w.node_id || 'local',
+        platform: w.platform || 'claude',
+        pid: Number(w.pid) || 0,
+      };
+    },
+
+    persistTerminalUiState() {
+      if (!this.terminalWindow) return;
+      this.saveCurrentTerminalEditorCache();
+      const terminalEditorCache = {};
+      Object.entries(this.terminalEditorCache || {}).forEach(([key, cached]) => {
+        const sourceTabs = Array.isArray(cached?.editorTabs) ? cached.editorTabs : [];
+        const editorTabs = sourceTabs
+          .filter(tab => tab?.type === 'terminal')
+          .map(tab => this.sanitizeEditorTab(tab))
+          .filter(tab => tab.path && tab.tmux_session);
+        const sourceActive = Number.isInteger(cached?.activeEditorTab) ? cached.activeEditorTab : -1;
+        const sourceActiveTab = sourceTabs[sourceActive];
+        const activeKey = sourceActiveTab?.type === 'terminal' ? this.editorTabKey(sourceActiveTab) : '';
+        const activeEditorTab = activeKey
+          ? editorTabs.findIndex(tab => this.editorTabKey(tab) === activeKey)
+          : -1;
+        terminalEditorCache[key] = {
+          terminalPanelTab: activeEditorTab >= 0 && cached?.terminalPanelTab === 'editor' ? 'editor' : 'terminal',
+          editor: activeEditorTab >= 0
+            ? this.sanitizeEditorState(editorTabs[activeEditorTab])
+            : this.blankEditorState(),
+          editorTabs,
+          activeEditorTab,
+        };
+      });
+      const payload = {
+        version: 1,
+        selectedWindow: this.terminalWindowIdentity(this.terminalWindow),
+        terminalZoom: !!this.terminalZoom,
+        terminalSidebarOpen: this.terminalSidebarOpen !== false,
+        sidebarView: this.sidebarView === 'terminals' ? 'terminals' : 'files',
+        terminalEditorCache,
+      };
+      try {
+        sessionStorage.setItem(TERMINAL_UI_STORAGE_KEY, JSON.stringify(payload));
+      } catch (_) {}
+    },
+
+    restorePersistedTerminalUiState() {
+      if (this.terminalUiRestoreAttempted) return;
+      this.terminalUiRestoreAttempted = true;
+      let saved = null;
+      try {
+        saved = JSON.parse(sessionStorage.getItem(TERMINAL_UI_STORAGE_KEY) || 'null');
+      } catch (_) {
+        return;
+      }
+      if (!saved || saved.version !== 1 || !saved.selectedWindow?.key) return;
+      this.terminalEditorCache = {};
+      if (saved.terminalEditorCache && typeof saved.terminalEditorCache === 'object') {
+        Object.entries(saved.terminalEditorCache).forEach(([key, cached]) => {
+          if (!cached || typeof cached !== 'object') return;
+          this.terminalEditorCache[key] = {
+            terminalPanelTab: cached.terminalPanelTab === 'editor' ? 'editor' : 'terminal',
+            editor: cached.editor && typeof cached.editor === 'object' ? cached.editor : this.blankEditorState(),
+            editorTabs: Array.isArray(cached.editorTabs) ? cached.editorTabs : [],
+            activeEditorTab: Number.isInteger(cached.activeEditorTab) ? cached.activeEditorTab : -1,
+          };
+        });
+      }
+      const w = this.windows.find(item => this.windowKey(item) === saved.selectedWindow.key);
+      if (!w) return;
+      this.terminalZoom = !!saved.terminalZoom;
+      const sidebarOpen = saved.terminalSidebarOpen !== false;
+      this.terminalSidebarOpen = sidebarOpen;
+      this.sidebarView = saved.sidebarView === 'terminals' ? 'terminals' : 'files';
+      this.openTerminal(w).then(() => {
+        this.terminalSidebarOpen = sidebarOpen;
+        this.$nextTick(() => {
+          this.scheduleTerminalFitOnResize(0);
+          this.scheduleEditorTerminalFitOnResize(0);
+        });
+      });
+    },
+
+    clearPersistedTerminalUiState() {
+      try {
+        sessionStorage.removeItem(TERMINAL_UI_STORAGE_KEY);
+      } catch (_) {}
+    },
+
     restoreTerminalEditorCache(w) {
       const key = this.windowKey(w);
       const cached = key ? this.terminalEditorCache[key] : null;
@@ -3391,17 +3538,14 @@ function superCliTerminal() {
       this.terminal?.focus();
     },
 
-    closeTerminalSession(options = {}) {
+    closeTerminalSession() {
       if (this.terminalResizeTimer) clearTimeout(this.terminalResizeTimer);
-      if (this.terminalResizeReconnectTimer) clearTimeout(this.terminalResizeReconnectTimer);
-      this.terminalResizeTimer = null;
-      this.terminalResizeReconnectTimer = null;
-      this.terminalResizePendingReconnect = false;
-      this.terminalLastResizeSignature = '';
-      if (!options.preserveResizeReconnectState) {
-        this.terminalLastReconnectResizeSignature = '';
-        this.terminalResizeReconnectCooldownUntil = 0;
+      if (this.terminalResizeFrame && window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(this.terminalResizeFrame);
       }
+      this.terminalResizeTimer = null;
+      this.terminalResizeFrame = null;
+      this.terminalLastResizeSignature = '';
       if (this.terminalResizeObserver) this.terminalResizeObserver.disconnect();
       this.terminalResizeObserver = null;
       if (this.terminalSocket) this.terminalSocket.close();
@@ -3472,6 +3616,7 @@ function superCliTerminal() {
       this.newDirOpen = false;
       this.newDirName = '';
       this.newDirError = '';
+      this.clearPersistedTerminalUiState();
     },
 
     async completeTerminalWindow() {
@@ -3511,58 +3656,138 @@ function superCliTerminal() {
 
     async toggleTerminalSidebar() {
       this.terminalSidebarOpen = !this.terminalSidebarOpen;
-      this.$nextTick(() => this.scheduleTerminalFitOnResize(250, { reconnectAfter: true }));
+      this.$nextTick(() => {
+        this.scheduleTerminalFitOnResize(250);
+        this.scheduleEditorTerminalFitOnResize(250);
+      });
     },
 
     async toggleTerminalZoom() {
       this.terminalZoom = !this.terminalZoom;
       this.zoomStartedAt = this.terminalZoom ? Date.now() : null;
-      this.$nextTick(() => this.scheduleTerminalFitOnResize(80, { reconnectAfter: true }));
+      this.$nextTick(() => {
+        this.scheduleTerminalFitOnResize(80);
+        this.scheduleEditorTerminalFitOnResize(80);
+      });
     },
 
-    scheduleTerminalFitOnResize(delay = 120, options = {}) {
+    scheduleTerminalFitOnResize(delay = 120) {
       if (!this.terminalWindow || !this.terminal) return;
-      this.terminalResizePendingReconnect = this.terminalResizePendingReconnect || !!options.reconnectAfter;
       if (this.terminalResizeTimer) clearTimeout(this.terminalResizeTimer);
-      this.terminalResizeTimer = setTimeout(() => {
-        this.terminalResizeTimer = null;
+      if (this.terminalResizeFrame && window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(this.terminalResizeFrame);
+      }
+      this.terminalResizeTimer = null;
+      this.terminalResizeFrame = null;
+      const retry = (attempt) => {
+        if (attempt >= 4 || !this.terminalWindow || !this.terminal) return;
+        if (window.requestAnimationFrame) {
+          this.terminalResizeFrame = window.requestAnimationFrame(() => {
+            this.terminalResizeFrame = null;
+            run(attempt + 1);
+          });
+        } else {
+          this.terminalResizeTimer = setTimeout(() => {
+            this.terminalResizeTimer = null;
+            run(attempt + 1);
+          }, 50);
+        }
+      };
+      const run = (attempt = 0) => {
+        this.terminalResizeFrame = null;
         if (!this.terminalWindow || !this.terminal) return;
-        this.fitTerminal();
+        const el = this.$refs.terminalOutput;
+        const rect = el?.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) {
+          retry(attempt);
+          return;
+        }
+        if (!this.fitTerminal()) {
+          retry(attempt);
+          return;
+        }
         const signature = this.terminalDimensionSignature();
         this.sendTerminalResize({ onlyIfChanged: true, signature });
-        const shouldReconnect = this.terminalResizePendingReconnect;
-        this.terminalResizePendingReconnect = false;
-        if (shouldReconnect) this.scheduleTerminalReconnectAfterResize(signature);
-      }, delay);
+      };
+      const afterLayout = () => {
+        if (window.requestAnimationFrame) {
+          this.terminalResizeFrame = window.requestAnimationFrame(run);
+        } else {
+          run();
+        }
+      };
+      if (delay <= 0) {
+        afterLayout();
+      } else {
+        this.terminalResizeTimer = setTimeout(() => {
+          this.terminalResizeTimer = null;
+          afterLayout();
+        }, delay);
+      }
     },
 
-    scheduleTerminalReconnectAfterResize(signature, delay = 900) {
-      if (!signature || !this.terminalWindow || !this.terminal) return;
-      if (signature === this.terminalLastReconnectResizeSignature) return;
-      if (Date.now() < this.terminalResizeReconnectCooldownUntil) return;
-      if (this.terminalResizeReconnectTimer) clearTimeout(this.terminalResizeReconnectTimer);
-      this.terminalResizeReconnectTimer = setTimeout(() => {
-        this.terminalResizeReconnectTimer = null;
-        if (!this.terminalWindow || !this.terminal) return;
-        if (Date.now() < this.terminalResizeReconnectCooldownUntil) return;
-        this.fitTerminal();
-        const currentSignature = this.terminalDimensionSignature();
-        if (!currentSignature || currentSignature === this.terminalLastReconnectResizeSignature) return;
-        if (this.terminalSocket?.readyState !== WebSocket.OPEN) return;
-        this.terminalLastReconnectResizeSignature = currentSignature;
-        this.terminalResizeReconnectCooldownUntil = Date.now() + 3000;
-        this.reconnectTerminal({ preserveResizeReconnectState: true });
-      }, delay);
+    scheduleEditorTerminalFitOnResize(delay = 120) {
+      if (!this.editorTerminal) return;
+      if (this.editorTerminalResizeTimer) clearTimeout(this.editorTerminalResizeTimer);
+      this.editorTerminalResizeTimer = null;
+      if (this.editorTerminalResizeFrame && window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(this.editorTerminalResizeFrame);
+      }
+      this.editorTerminalResizeFrame = null;
+      const retry = (attempt) => {
+        if (attempt >= 4 || !this.editorTerminal) return;
+        if (window.requestAnimationFrame) {
+          this.editorTerminalResizeFrame = window.requestAnimationFrame(() => {
+            this.editorTerminalResizeFrame = null;
+            run(attempt + 1);
+          });
+        } else {
+          this.editorTerminalResizeTimer = setTimeout(() => {
+            this.editorTerminalResizeTimer = null;
+            run(attempt + 1);
+          }, 50);
+        }
+      };
+      const run = (attempt = 0) => {
+        const el = this.$refs.editorTerminalOutput;
+        if (!this.editorTerminal || !el) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+          retry(attempt);
+          return;
+        }
+        if (!this.fitEditorTerminal()) {
+          retry(attempt);
+          return;
+        }
+        this.sendEditorTerminalResize({ onlyIfChanged: true });
+      };
+      const afterLayout = () => {
+        if (window.requestAnimationFrame) {
+          this.editorTerminalResizeFrame = window.requestAnimationFrame(() => {
+            this.editorTerminalResizeFrame = null;
+            run();
+          });
+        } else {
+          run();
+        }
+      };
+      if (delay <= 0) {
+        afterLayout();
+      } else {
+        this.editorTerminalResizeTimer = setTimeout(() => {
+          this.editorTerminalResizeTimer = null;
+          afterLayout();
+        }, delay);
+      }
     },
 
-    async reconnectTerminal(options = {}) {
+    async reconnectTerminal() {
       if (!this.terminalWindow) return;
       if (this.terminalWindow.triage === 'completed') {
         await this.startTerminalWindow();
       }
-      this.closeTerminalSession({
-        preserveResizeReconnectState: !!options.preserveResizeReconnectState,
-      });
+      this.closeTerminalSession();
       this.$nextTick(() => this.startTerminalSession());
     },
 
@@ -3591,8 +3816,9 @@ function superCliTerminal() {
       if (!this.terminalWindow) return;
       const el = this.$refs.terminalOutput;
       if (!el) return;
-      if (!window.Terminal) {
-        el.textContent = 'xterm.js failed to load. Check browser network access to the CDN.';
+      if (!window.Terminal || !window.FitAddon?.FitAddon) {
+        const dependency = !window.Terminal ? 'xterm.js' : 'xterm FitAddon';
+        el.textContent = `${dependency} failed to load. Check browser network access to the CDN, then refresh LUCID.`;
         return;
       }
       el.innerHTML = '';
@@ -3613,8 +3839,8 @@ function superCliTerminal() {
           selectionBackground: '#475569',
         },
       });
-      const fitAddon = window.FitAddon ? new window.FitAddon.FitAddon() : null;
-      if (fitAddon) term.loadAddon(fitAddon);
+      const fitAddon = new window.FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
       term.open(el);
       this.terminal = term;
       this.terminalFitAddon = fitAddon;
@@ -3745,9 +3971,11 @@ function superCliTerminal() {
       el.addEventListener('touchcancel', this.terminalTouchEndHandler, true);
 
       this.terminalResizeObserver = new ResizeObserver(() => {
-        this.scheduleTerminalFitOnResize(50);
+        this.scheduleTerminalFitOnResize(0);
       });
       this.terminalResizeObserver.observe(el);
+      if (this.$refs.terminalPanel) this.terminalResizeObserver.observe(this.$refs.terminalPanel);
+      this.scheduleTerminalFitOnResize(0);
 
       // Load scrollback history asynchronously in the background.
       // Never awaits — the terminal is already live.
@@ -3875,9 +4103,14 @@ function superCliTerminal() {
     },
 
     fitTerminal() {
+      if (!this.terminalFitAddon) return false;
       try {
-        this.terminalFitAddon?.fit();
-      } catch (_) {}
+        this.terminalFitAddon.fit();
+        return true;
+      } catch (error) {
+        console.warn('[LUCID] terminal fit failed', error);
+        return false;
+      }
     },
 
     sendTerminalResize(options = {}) {
@@ -4049,8 +4282,9 @@ function superCliTerminal() {
       this.closeEditorTerminalSession();
       const el = this.$refs.editorTerminalOutput;
       if (!el) return;
-      if (!window.Terminal) {
-        el.textContent = 'xterm.js failed to load. Check browser network access to the CDN.';
+      if (!window.Terminal || !window.FitAddon?.FitAddon) {
+        const dependency = !window.Terminal ? 'xterm.js' : 'xterm FitAddon';
+        el.textContent = `${dependency} failed to load. Check browser network access to the CDN, then refresh LUCID.`;
         return;
       }
       el.innerHTML = '';
@@ -4071,8 +4305,8 @@ function superCliTerminal() {
           selectionBackground: '#475569',
         },
       });
-      const fitAddon = window.FitAddon ? new window.FitAddon.FitAddon() : null;
-      if (fitAddon) term.loadAddon(fitAddon);
+      const fitAddon = new window.FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
       term.open(el);
       this.editorTerminal = term;
       this.editorTerminalFitAddon = fitAddon;
@@ -4170,14 +4404,21 @@ function superCliTerminal() {
       el.addEventListener('touchcancel', this.editorTerminalTouchEndHandler, true);
 
       this.editorTerminalResizeObserver = new ResizeObserver(() => {
-        this.fitEditorTerminal();
-        this.sendEditorTerminalResize({ onlyIfChanged: true });
+        this.scheduleEditorTerminalFitOnResize(0);
       });
       this.editorTerminalResizeObserver.observe(el);
+      if (this.$refs.terminalPanel) this.editorTerminalResizeObserver.observe(this.$refs.terminalPanel);
+      this.scheduleEditorTerminalFitOnResize(0);
       this.primeEditorTerminalScrollback(term, tab, expectedKey);
     },
 
     closeEditorTerminalSession() {
+      if (this.editorTerminalResizeTimer) clearTimeout(this.editorTerminalResizeTimer);
+      this.editorTerminalResizeTimer = null;
+      if (this.editorTerminalResizeFrame && window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(this.editorTerminalResizeFrame);
+      }
+      this.editorTerminalResizeFrame = null;
       if (this.editorTerminalResizeObserver) this.editorTerminalResizeObserver.disconnect();
       this.editorTerminalResizeObserver = null;
       const el = this.$refs.editorTerminalOutput;
@@ -4233,9 +4474,14 @@ function superCliTerminal() {
     },
 
     fitEditorTerminal() {
+      if (!this.editorTerminalFitAddon) return false;
       try {
-        this.editorTerminalFitAddon?.fit();
-      } catch (_) {}
+        this.editorTerminalFitAddon.fit();
+        return true;
+      } catch (error) {
+        console.warn('[LUCID] editor terminal fit failed', error);
+        return false;
+      }
     },
 
     sendEditorTerminalResize(options = {}) {
@@ -4531,7 +4777,7 @@ function superCliTerminal() {
 
     async resumeSession(s) {
       // If alive, try to find and focus the existing window first
-      if (s.is_alive) {
+      if (this.isHistorySessionActive(s)) {
         const existing = this.windows.find(w =>
           w.session_id === s.session_id &&
           (w.node_id || 'local') === (s.node_id || 'local') &&
@@ -4555,6 +4801,8 @@ function superCliTerminal() {
           await this.openTerminal(refound);
           return;
         }
+        this.toast('Session is already active, but its terminal is not visible yet. Refresh the node snapshot instead of resuming it again.');
+        return;
       }
       // Fallback: launch a new resume
       const r = await fetch(this.nodeSessionUrl(s, 'resume'), { method: 'POST' });
@@ -4571,6 +4819,51 @@ function superCliTerminal() {
       const r = await fetch(this.nodeSessionUrl(s, 'fork'), { method: 'POST' });
       const d = await r.json();
       this.toast(d.ok ? 'Forked → new session (inherits history)' : 'Fork failed: ' + (d.error || ''));
+    },
+
+    isHistorySessionActive(s) {
+      if (s.is_alive) return true;
+      return this.windows.some(w =>
+        w.alive &&
+        w.session_id === s.session_id &&
+        (w.node_id || 'local') === (s.node_id || 'local') &&
+        (w.platform || 'claude') === (s.platform || 'claude')
+      );
+    },
+
+    async deleteHistorySession(s) {
+      if (this.isHistorySessionActive(s)) {
+        this.toast('Session is still active. Close it before deleting.');
+        return;
+      }
+      const label = s.project_name || s.session_id;
+      const confirmed = window.confirm(
+        `Permanently delete session "${label}" (${s.session_id})?\n\nThis cannot be undone.`
+      );
+      if (!confirmed) return;
+
+      try {
+        const r = await fetch(this.nodeSessionUrl(s), { method: 'DELETE' });
+        let d = {};
+        try { d = await r.json(); } catch (_) {}
+        if (!r.ok || !d.ok) {
+          this.toast('Delete failed: ' + (d.detail || d.error || `HTTP ${r.status}`));
+          return;
+        }
+        const key = s.session_key || `${s.node_id || 'local'}:${s.platform || 'claude'}:${s.session_id}`;
+        if (this.expandedHistoryId === key) {
+          this.expandedHistoryId = null;
+          this.timelineData = null;
+          this.planData = null;
+        }
+        const refreshPage = this.historySessions.length === 1 && this.historyPage > 1
+          ? this.historyPage - 1
+          : this.historyPage;
+        await this.loadHistory(refreshPage);
+        this.toast('Deleted session');
+      } catch (e) {
+        this.toast('Delete failed: ' + String(e.message || e));
+      }
     },
 
     scrollToSkill(skillName) {
@@ -4649,7 +4942,7 @@ function superCliTerminal() {
     async refreshNodes() {
       const r = await fetch('/api/nodes');
       const d = await r.json();
-      this.nodes = d.nodes || [];
+      this.nodes = this.orderNodes(d.nodes);
       this.ensureSkillNodeState();
       this.sshHistory = d.ssh_history || [];
       if (this.sshHistory.length && this.isDeployFormDefault()) {
@@ -5449,6 +5742,7 @@ function superCliTerminal() {
           this.editorTabs.push(tab);
           this.terminalPanelTab = 'editor';
           this.switchEditorTab(this.editorTabs.length - 1);
+          this.persistTerminalUiState();
           this.toast('Opened Bash tab: ' + d.tmux_session);
         } else {
           let error = d.stderr || d.error || d.detail || '';

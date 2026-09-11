@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import shlex
 import sqlite3
@@ -17,6 +18,89 @@ from core.common.text_encoding import subprocess_text_kwargs
 STATE_DIR = Path(os.environ.get("LUCID_STATE_DIR", "~/.lucid")).expanduser()
 DB_PATH = STATE_DIR / "registry.sqlite"
 _PANE_ACTIVITY: dict[str, dict] = {}
+
+_APP_COMMAND_RE = {
+    "codex": re.compile(r"(?:^|[/\s])codex(?:\s|$)", re.IGNORECASE),
+    "claude": re.compile(r"(?:^|[/\s])claude(?:\s|$)", re.IGNORECASE),
+}
+_NODE_COMMANDS = {"node", "nodejs", "npm", "npx"}
+
+
+def _tmux_process_tree(tmux_session: str) -> tuple[set[int], dict[int, tuple[int, str, str]]]:
+    panes = subprocess.run(
+        [runtime.tmux_bin(), "list-panes", "-t", tmux_session, "-F", "#{pane_pid}"],
+        capture_output=True,
+        timeout=2,
+        **subprocess_text_kwargs(),
+    )
+    if panes.returncode != 0:
+        return set(), {}
+    pane_pids = {int(line) for line in panes.stdout.splitlines() if line.strip().isdigit()}
+    processes = subprocess.run(
+        ["ps", "-eo", "pid=,ppid=,comm=,args="],
+        capture_output=True,
+        timeout=2,
+        **subprocess_text_kwargs(),
+    )
+    if processes.returncode != 0:
+        return pane_pids, {}
+    rows: dict[int, tuple[int, str, str]] = {}
+    for line in processes.stdout.splitlines():
+        parts = line.strip().split(None, 3)
+        if len(parts) != 4:
+            continue
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        rows[pid] = (ppid, parts[2].lower(), parts[3])
+    return pane_pids, rows
+
+
+def _tmux_application_alive(tmux_session: str | None, platform: str) -> bool:
+    """Return whether the current tmux pane contains the requested app.
+
+    The runner PID is intentionally not treated as the source of truth here:
+    Codex can self-update and replace its process while keeping the same tmux
+    session. In that case the old runner PID is gone, but the user can still
+    launch a fresh Codex from the same shell.
+    """
+    if not tmux_session or platform not in {"codex", "claude"}:
+        return False
+    try:
+        pane_pids, processes = _tmux_process_tree(tmux_session)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+    children: dict[int, list[int]] = {}
+    for pid, (ppid, _comm, _args) in processes.items():
+        children.setdefault(ppid, []).append(pid)
+    pending = list(pane_pids)
+    visited: set[int] = set()
+    app_re = _APP_COMMAND_RE[platform]
+    while pending:
+        pid = pending.pop()
+        if pid in visited:
+            continue
+        visited.add(pid)
+        row = processes.get(pid)
+        if row:
+            _ppid, comm, args = row
+            if comm == platform:
+                return True
+            if (comm in _NODE_COMMANDS or comm.startswith("node")) and app_re.search(args):
+                return True
+        pending.extend(children.get(pid, []))
+    return False
+
+
+def _effective_alive(platform: str, pid: int, tmux_session: str | None, exited_at: int | None) -> bool:
+    alive = _pid_alive(int(pid)) if not exited_at else False
+    if not alive and tmux_session and _tmux_application_alive(tmux_session, platform):
+        # A self-updating Codex/Claude process may have a new PID inside the
+        # original tmux shell. Keep the managed window visible until the tmux
+        # session itself is closed.
+        return True
+    return alive
 
 
 def _conn() -> sqlite3.Connection:
@@ -143,7 +227,12 @@ def _terminal_activity_state(tmux_session: str | None, platform: str, fallback_m
 
     capture = live_state.tail_capture(live_state.capture_tmux_pane(tmux_session, lines=live_state.CAPTURE_TAIL_LINES))
     previous_capture = previous.get("current_capture")
-    terminal_state = live_state.classify_capture_diff(capture, previous_capture, captured_at_ms=now_ms)
+    terminal_state = live_state.classify_capture_diff(
+        capture,
+        previous_capture,
+        captured_at_ms=now_ms,
+        platform=platform,
+    )
     if terminal_state.get("triage") == "working":
         updated_at_ms = now_ms
     else:
@@ -203,7 +292,7 @@ def managed_windows(node_id: str, node_name: str) -> list[dict]:
     for row in rows:
         (proc_id, platform, pid, cwd, tty, argv, tmux_session, started_at,
          updated_at, exited_at, exit_code, session_id, transcript_path, session_file_path, status, display_name, completed) = row
-        alive = _pid_alive(int(pid)) if not exited_at else False
+        alive = _effective_alive(platform, int(pid), tmux_session, exited_at)
         session_data = claude_state.load_session(session_file_path) if platform == "claude" else {}
         if platform == "claude" and session_data:
             session_id = session_data.get("sessionId") or session_id
@@ -294,7 +383,7 @@ def find_managed_window(platform: str, pid: int) -> Optional[dict]:
         session_id = session_data.get("sessionId") or session_id
         cwd = session_data.get("cwd") or cwd
         transcript_path = transcript_path or claude_state.transcript_path_for_session(session_data)
-    alive = _pid_alive(int(stored_pid)) if not exited_at else False
+    alive = _effective_alive(stored_platform, int(stored_pid), tmux_session, exited_at)
     return {
         "id": proc_id,
         "platform": stored_platform,

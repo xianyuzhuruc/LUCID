@@ -23,3 +23,7 @@ run.log
 # generated demo data + public mirror clone
 fixtures/demo-home/
 .public-mirror/
+
+# Keep automated regression coverage in version control.
+!tests/
+!tests/*.py

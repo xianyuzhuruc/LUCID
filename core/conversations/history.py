@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
@@ -13,6 +15,8 @@ from core.common.text_encoding import open_utf8, read_utf8, subprocess_text_kwar
 from core.terminal.sessions import CLAUDE_HOME, HOME_BASE, PROJECTS_DIR
 
 HISTORY_JSONL = CLAUDE_HOME / "history.jsonl"
+CLAUDE_SESSIONS_DIR = CLAUDE_HOME / "sessions"
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
 
 
 @dataclass
@@ -39,6 +43,122 @@ class HistorySession:
 _cache: list[HistorySession] = []
 _cache_ts: float = 0
 _CACHE_TTL = 30
+
+
+def invalidate_cache() -> None:
+    global _cache, _cache_ts
+    _cache = []
+    _cache_ts = 0
+
+
+def _validate_session_id(session_id: str) -> str:
+    sid = str(session_id or "")
+    if sid in {".", ".."} or not _SESSION_ID_RE.fullmatch(sid):
+        raise ValueError("invalid session id")
+    return sid
+
+
+def _remove_claude_history_entries(session_id: str) -> int:
+    if not HISTORY_JSONL.exists():
+        return 0
+    raw_lines = HISTORY_JSONL.read_bytes().splitlines(keepends=True)
+    kept: list[bytes] = []
+    removed = 0
+    for raw_line in raw_lines:
+        try:
+            entry = json.loads(raw_line.decode("utf-8"))
+        except Exception:
+            kept.append(raw_line)
+            continue
+        if entry.get("sessionId") == session_id:
+            removed += 1
+        else:
+            kept.append(raw_line)
+    if not removed:
+        return 0
+
+    HISTORY_JSONL.parent.mkdir(parents=True, exist_ok=True)
+    original_mode = HISTORY_JSONL.stat().st_mode & 0o777
+    fd, temp_name = tempfile.mkstemp(prefix=".history-delete-", dir=str(HISTORY_JSONL.parent))
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.writelines(kept)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(temp_path, original_mode)
+        os.replace(temp_path, HISTORY_JSONL)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+    return removed
+
+
+def _delete_claude_session(session_id: str) -> tuple[int, int]:
+    transcript_paths: list[Path] = []
+    if PROJECTS_DIR.exists():
+        for project_dir in PROJECTS_DIR.iterdir():
+            if project_dir.is_dir():
+                transcript = project_dir / f"{session_id}.jsonl"
+                if transcript.is_file() or transcript.is_symlink():
+                    transcript_paths.append(transcript)
+
+    metadata_paths: list[Path] = []
+    if CLAUDE_SESSIONS_DIR.exists():
+        for metadata in CLAUDE_SESSIONS_DIR.glob("*.json"):
+            try:
+                payload = json.loads(read_utf8(metadata))
+            except Exception:
+                continue
+            if payload.get("sessionId") == session_id:
+                metadata_paths.append(metadata)
+
+    removed_history_entries = _remove_claude_history_entries(session_id)
+    if not transcript_paths and not metadata_paths and not removed_history_entries:
+        raise FileNotFoundError(session_id)
+
+    deleted_files = 0
+    for path in transcript_paths + metadata_paths:
+        path.unlink()
+        deleted_files += 1
+    return deleted_files, removed_history_entries
+
+
+def _delete_codex_session(session_id: str) -> tuple[int, int]:
+    from . import codex
+
+    matches: list[Path] = []
+    if codex.CODEX_SESSIONS_DIR.exists():
+        for rollout in codex.CODEX_SESSIONS_DIR.rglob("*.jsonl"):
+            metadata = codex._parse_session_meta(rollout)
+            if metadata and metadata.get("id") == session_id:
+                matches.append(rollout)
+    if not matches:
+        raise FileNotFoundError(session_id)
+    for rollout in matches:
+        rollout.unlink()
+    return len(matches), 0
+
+
+def delete_session(platform: str, session_id: str) -> dict:
+    """Physically remove one inactive session's persisted artifacts."""
+    normalized_platform = str(platform or "").strip().lower()
+    sid = _validate_session_id(session_id)
+    if normalized_platform == "claude":
+        deleted_files, removed_history_entries = _delete_claude_session(sid)
+    elif normalized_platform == "codex":
+        deleted_files, removed_history_entries = _delete_codex_session(sid)
+    else:
+        raise ValueError(f"deleting {normalized_platform or 'unknown'} sessions is not supported")
+    invalidate_cache()
+    return {
+        "ok": True,
+        "action": "deleted",
+        "platform": normalized_platform,
+        "session_id": sid,
+        "deleted_files": deleted_files,
+        "removed_history_entries": removed_history_entries,
+    }
 
 
 def _load_history_jsonl() -> dict[str, dict]:
@@ -100,7 +220,7 @@ def _scan_transcripts() -> dict[str, dict]:
 
 
 def _find_alive_pids() -> set[str]:
-    sessions_dir = CLAUDE_HOME / "sessions"
+    sessions_dir = CLAUDE_SESSIONS_DIR
     alive: set[str] = set()
     if not sessions_dir.exists():
         return alive

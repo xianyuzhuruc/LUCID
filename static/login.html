@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>LUCID · Access</title>
+<link rel="icon" type="image/png" href="/favicon.ico?v=2026082301">
+<style>
+  :root {
+    color-scheme: dark;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #070a0e;
+    color: #e8edf2;
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    overflow-x: hidden;
+    background: #070a0e;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    border: 1px solid rgba(123, 231, 255, .05);
+    box-shadow: inset 0 0 120px rgba(0, 0, 0, .7);
+  }
+  .shell {
+    width: min(100% - 32px, 980px);
+    min-height: 600px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr);
+    border: 1px solid #25313a;
+    background: #0b1015;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .48);
+  }
+  .identity {
+    position: relative;
+    min-height: 100%;
+    padding: clamp(34px, 6vw, 72px);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border-right: 1px solid #25313a;
+    background: #0e151b;
+    overflow: hidden;
+  }
+  .identity::after {
+    content: "LUCID / HUB / ACCESS";
+    position: absolute;
+    right: -126px;
+    bottom: 168px;
+    transform: rotate(-90deg);
+    color: #24313a;
+    font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .36em;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    color: #f4f7fa;
+    font: 750 18px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .24em;
+  }
+  .brand img { width: 32px; height: 32px; object-fit: contain; }
+  .identity-copy { max-width: 430px; padding-right: 24px; }
+  .kicker, .micro {
+    color: #79e7ff;
+    font: 650 10px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+  }
+  .identity h1 {
+    margin: 18px 0 18px;
+    max-width: 15ch;
+    color: #f1f5f8;
+    font-size: clamp(28px, 3.4vw, 44px);
+    line-height: 1.04;
+    letter-spacing: -.045em;
+  }
+  .system-line {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    color: #6e7c87;
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .system-line::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    background: #7ee787;
+    box-shadow: 0 0 0 4px rgba(126, 231, 135, .08);
+  }
+  .access-panel {
+    padding: clamp(34px, 5vw, 66px);
+    display: flex;
+    align-items: center;
+    background: #090d11;
+  }
+  .panel-inner { width: 100%; }
+  .panel-index {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #202a32;
+    color: #65737e;
+    font: 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .15em;
+  }
+  .mode-tag { color: #79e7ff; }
+  h2 {
+    margin: 34px 0 8px;
+    color: #edf2f6;
+    font-size: 27px;
+    line-height: 1.2;
+    letter-spacing: -.025em;
+  }
+  .subtitle {
+    min-height: 44px;
+    margin: 0 0 27px;
+    color: #85939f;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+  .field { margin-top: 17px; }
+  label {
+    display: block;
+    margin-bottom: 8px;
+    color: #a9b4bd;
+    font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .password-wrap { position: relative; }
+  input {
+    width: 100%;
+    height: 48px;
+    border: 1px solid #2a3741;
+    border-radius: 4px;
+    outline: none;
+    padding: 0 46px 0 14px;
+    background: #0c1217;
+    color: #edf4f7;
+    font: 15px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    transition: border-color .16s, box-shadow .16s;
+  }
+  input:focus {
+    border-color: #64cfe5;
+    box-shadow: 0 0 0 3px rgba(100, 207, 229, .1);
+  }
+  input::placeholder { color: #45535e; }
+  .reveal {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: 44px;
+    border: 0;
+    background: transparent;
+    color: #657782;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  .reveal:hover { color: #b9c5cc; }
+  .error {
+    min-height: 21px;
+    margin: 13px 0 0;
+    color: #ff8b8b;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .submit {
+    width: 100%;
+    height: 49px;
+    margin-top: 11px;
+    border: 1px solid #79e7ff;
+    border-radius: 4px;
+    background: #79e7ff;
+    color: #061015;
+    cursor: pointer;
+    font: 750 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    transition: background .16s, border-color .16s, transform .16s;
+  }
+  .submit:hover:not(:disabled) { background: #a5efff; border-color: #a5efff; }
+  .submit:active:not(:disabled) { transform: translateY(1px); }
+  .submit:disabled { opacity: .45; cursor: wait; }
+  [hidden] { display: none !important; }
+  @media (max-width: 760px) {
+    body { display: block; }
+    .shell {
+      width: 100%;
+      min-height: 100vh;
+      min-height: 100dvh;
+      grid-template-columns: 1fr;
+      border: 0;
+    }
+    .identity { min-height: 260px; padding: 30px 26px; border-right: 0; border-bottom: 1px solid #25313a; }
+    .identity h1 { margin: 26px 0 10px; max-width: none; font-size: 24px; line-height: 1.05; }
+    .system-line { margin-top: 24px; }
+    .access-panel { padding: 34px 26px 46px; align-items: start; }
+    .identity::after { display: none; }
+  }
+</style>
+</head>
+<body>
+  <main class="shell" aria-labelledby="access-title">
+    <section class="identity">
+      <div class="brand"><img src="/favicon.ico?v=2026082301" alt="">LUCID</div>
+      <div class="identity-copy">
+        <div class="kicker">Local intelligence control plane</div>
+        <h1>The LLM-Unified Coding &amp; Intelligent Development Platform</h1>
+      </div>
+      <div class="system-line">AUTHENTICATION REQUIRED</div>
+    </section>
+
+    <section class="access-panel">
+      <div class="panel-inner">
+        <div class="panel-index" id="panel-index"><span class="mode-tag" id="mode-tag">CHECKING</span></div>
+        <div id="loading-state">
+          <h2>正在检查访问状态</h2>
+          <p class="subtitle">正在读取本机 Hub 的认证配置…</p>
+        </div>
+
+        <form id="auth-form" hidden novalidate>
+          <h2 id="access-title">进入 LUCID</h2>
+          <p class="subtitle" id="access-subtitle">输入 Hub 访问密码以继续。</p>
+
+          <div class="field">
+            <label for="password">访问密码</label>
+            <div class="password-wrap">
+              <input id="password" name="password" type="password" minlength="8" maxlength="4096" required autocomplete="current-password" autofocus placeholder="输入密码">
+              <button class="reveal" type="button" data-target="password" aria-label="显示密码" title="显示或隐藏密码">◉</button>
+            </div>
+          </div>
+
+          <div class="field" id="confirm-field" hidden>
+            <label for="password-confirm">确认密码</label>
+            <div class="password-wrap">
+              <input id="password-confirm" name="confirm" type="password" minlength="8" maxlength="4096" autocomplete="new-password" placeholder="再次输入密码">
+              <button class="reveal" type="button" data-target="password-confirm" aria-label="显示确认密码" title="显示或隐藏密码">◉</button>
+            </div>
+          </div>
+
+          <p class="error" id="form-error" role="alert" aria-live="polite"></p>
+          <button class="submit" id="submit-button" type="submit">进入 LUCID</button>
+        </form>
+
+        <div id="fatal-state" hidden>
+          <h2>认证配置不可用</h2>
+          <p class="subtitle">LUCID 已安全拒绝访问。请检查服务器上的 <code>~/.lucid/auth.json</code> 及其权限后重试。</p>
+          <p class="error" id="fatal-error">AUTH CONFIGURATION ERROR</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script>
+(() => {
+  const form = document.getElementById('auth-form');
+  const loadingState = document.getElementById('loading-state');
+  const fatalState = document.getElementById('fatal-state');
+  const panelIndex = document.getElementById('panel-index');
+  const modeTag = document.getElementById('mode-tag');
+  const title = document.getElementById('access-title');
+  const subtitle = document.getElementById('access-subtitle');
+  const password = document.getElementById('password');
+  const confirmation = document.getElementById('password-confirm');
+  const confirmField = document.getElementById('confirm-field');
+  const error = document.getElementById('form-error');
+  const submit = document.getElementById('submit-button');
+  let setupMode = false;
+
+  function showFatal() {
+    loadingState.hidden = true;
+    form.hidden = true;
+    fatalState.hidden = false;
+    panelIndex.hidden = false;
+    modeTag.textContent = 'LOCKED';
+  }
+
+  function configureForm(configured) {
+    setupMode = !configured;
+    loadingState.hidden = true;
+    fatalState.hidden = true;
+    form.hidden = false;
+    panelIndex.hidden = configured;
+    confirmField.hidden = configured;
+    confirmation.required = !configured;
+    password.autocomplete = configured ? 'current-password' : 'new-password';
+    modeTag.textContent = configured ? '' : 'FIRST RUN';
+    title.textContent = configured ? '进入 LUCID' : '创建访问密码';
+    subtitle.textContent = configured
+      ? '输入 Hub 访问密码以继续。'
+      : '首次运行需要设置一个至少 8 个字符的本机访问密码。';
+    submit.textContent = configured ? '进入 LUCID' : '创建并进入';
+    requestAnimationFrame(() => password.focus());
+  }
+
+  async function readJson(response) {
+    try { return await response.json(); } catch (_) { return {}; }
+  }
+
+  async function loadStatus() {
+    try {
+      const response = await fetch('/api/auth/status', { cache: 'no-store' });
+      const data = await readJson(response);
+      if (!response.ok) {
+        showFatal();
+        return;
+      }
+      if (data.authenticated) {
+        window.location.replace('/');
+        return;
+      }
+      configureForm(Boolean(data.configured));
+    } catch (_) {
+      showFatal();
+    }
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    error.textContent = '';
+    if (password.value.length < 8) {
+      error.textContent = '密码至少需要 8 个字符。';
+      password.focus();
+      return;
+    }
+    if (setupMode && password.value !== confirmation.value) {
+      error.textContent = '两次输入的密码不一致。';
+      confirmation.focus();
+      return;
+    }
+
+    submit.disabled = true;
+    submit.textContent = setupMode ? '正在创建…' : '正在验证…';
+    try {
+      const endpoint = setupMode ? '/api/auth/setup' : '/api/auth/login';
+      const body = setupMode
+        ? { password: password.value, confirm: confirmation.value }
+        : { password: password.value };
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await readJson(response);
+      password.value = '';
+      confirmation.value = '';
+      if (response.ok) {
+        window.location.replace('/');
+        return;
+      }
+      if (response.status === 409 && setupMode) {
+        await loadStatus();
+        error.textContent = '密码已由另一个页面创建，请重新输入。';
+        return;
+      }
+      if (response.status === 429) {
+        error.textContent = '尝试次数过多，请稍后再试。';
+      } else if (response.status === 503) {
+        showFatal();
+        return;
+      } else {
+        error.textContent = data.detail || '验证失败，请重试。';
+      }
+    } catch (_) {
+      error.textContent = '无法连接 LUCID Hub，请检查服务状态。';
+    } finally {
+      submit.disabled = false;
+      submit.textContent = setupMode ? '创建并进入' : '进入 LUCID';
+    }
+  });
+
+  document.querySelectorAll('.reveal').forEach((button) => {
+    button.addEventListener('click', () => {
+      const input = document.getElementById(button.dataset.target);
+      const revealing = input.type === 'password';
+      input.type = revealing ? 'text' : 'password';
+      button.textContent = revealing ? '○' : '◉';
+      button.setAttribute('aria-label', revealing ? '隐藏密码' : '显示密码');
+      input.focus();
+    });
+  });
+
+  loadStatus();
+})();
+</script>
+</body>
+</html>

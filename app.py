@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from paramiko.ssh_exception import AuthenticationException, NoValidConnectionsError, SSHException
 from sse_starlette.sse import EventSourceResponse
 from websockets.asyncio.client import connect as websocket_connect
@@ -37,6 +37,16 @@ from core.common.text_encoding import read_utf8, subprocess_text_kwargs, write_u
 from core.conversations import codex, history, search, transcripts
 from core.dashboard import localstate
 from core.hub import nodes
+from core.hub.auth import (
+    COOKIE_NAME,
+    SESSION_MAX_AGE_SECONDS,
+    AlreadyConfiguredError,
+    AuthConfigError,
+    AuthManager,
+    InvalidCredentialsError,
+    LoginRateLimitedError,
+    PasswordPolicyError,
+)
 from core.hub.skills_sync import (
     build_agent_skills_tarball_raw,
     build_skills_tarball_bytes,
@@ -60,6 +70,7 @@ except ImportError:  # pragma: no cover - Windows hub mode does not expose local
 
 HERE = Path(__file__).parent
 STATIC_DIR = HERE / "static"
+hub_auth_manager = AuthManager(nodes.STATE_DIR)
 
 
 # ---------- shared in-memory state ----------
@@ -183,6 +194,60 @@ def _require_agent_auth(authorization: str | None) -> None:
     expected = f"Bearer {token}"
     if authorization != expected:
         raise HTTPException(401, "invalid agent token")
+
+
+_HUB_AUTH_PUBLIC_PATHS = frozenset({
+    "/login",
+    "/favicon.ico",
+    "/api/auth/status",
+    "/api/auth/setup",
+    "/api/auth/login",
+    "/api/auth/logout",
+})
+
+
+def _hub_auth_public_path(path: str) -> bool:
+    return path in _HUB_AUTH_PUBLIC_PATHS or path.startswith("/agent/v1/")
+
+
+def _hub_session_valid(session_token: str | None) -> bool:
+    if not hub_auth_manager.is_configured():
+        return False
+    return hub_auth_manager.verify_session(session_token)
+
+
+def _hub_auth_client_key(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _set_hub_session_cookie(response: Response, request: Request, session_token: str) -> None:
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=session_token,
+        max_age=SESSION_MAX_AGE_SECONDS,
+        path="/",
+        secure=request.url.scheme == "https",
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def _require_hub_mode() -> None:
+    if not _is_hub_mode():
+        raise HTTPException(404, "Not Found")
+
+
+async def _authenticate_hub_websocket(websocket: WebSocket) -> bool:
+    if not _is_hub_mode():
+        return True
+    try:
+        authenticated = _hub_session_valid(websocket.cookies.get(COOKIE_NAME))
+    except AuthConfigError:
+        authenticated = False
+    if authenticated:
+        return True
+    await websocket.close(code=4401, reason="authentication required")
+    return False
 
 
 def _public_node(node: nodes.NodeConfig, health: dict | None = None) -> dict:
@@ -1122,6 +1187,38 @@ def _agent_resume_or_fork(platform: str, session_id: str, fork: bool) -> dict:
     return result
 
 
+def _delete_local_history_session(platform: str, session_id: str) -> dict:
+    normalized_platform = str(platform or "").strip().lower()
+    if normalized_platform not in {"claude", "codex"}:
+        raise HTTPException(400, f"deleting {normalized_platform or 'unknown'} sessions is not supported")
+
+    try:
+        managed = registry.managed_windows(_local_node_id(), _local_node_id())
+    except Exception as e:
+        raise HTTPException(503, f"unable to verify session activity: {e}") from e
+    active_managed = any(
+        row.get("alive")
+        and row.get("platform", "claude") == normalized_platform
+        and (
+            row.get("session_id") == session_id
+            or session_id in str(row.get("current_task") or "")
+        )
+        for row in managed
+    )
+    active_unmanaged_claude = (
+        normalized_platform == "claude" and session_id in history._find_alive_pids()
+    )
+    if active_managed or active_unmanaged_claude:
+        raise HTTPException(409, "session is still active; close it before deleting")
+
+    try:
+        return history.delete_session(normalized_platform, session_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, "session not found") from e
+
+
 def _timeline_for_window_row(platform: str, pid: int, row: dict, limit: int = 2000) -> dict:
     transcript_path = row.get("transcript_path") or ""
     session_id = row.get("session_id") or ""
@@ -1382,6 +1479,23 @@ def _set_pty_size(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
 
+def _resize_terminal_pty(
+    fd: int,
+    proc: subprocess.Popen,
+    rows: int,
+    cols: int,
+) -> None:
+    """Resize the PTY and notify its detached tmux client."""
+    _set_pty_size(fd, rows, cols)
+    if proc.poll() is not None:
+        return
+    # The tmux attach process is launched with start_new_session=True, so the
+    # PTY is not its controlling terminal and TIOCSWINSZ does not deliver the
+    # usual SIGWINCH automatically. Its PID is also its process-group ID.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGWINCH)
+
+
 def _write_pty_all(fd: int, data: bytes, timeout: float = 5.0) -> None:
     view = memoryview(data)
     written_total = 0
@@ -1540,7 +1654,12 @@ async def _local_tmux_terminal_ws(
                 payload = {"type": "data", "data": raw}
             msg_type = payload.get("type")
             if msg_type == "resize":
-                _set_pty_size(master_fd, int(payload.get("rows") or 24), int(payload.get("cols") or 80))
+                _resize_terminal_pty(
+                    master_fd,
+                    proc,
+                    int(payload.get("rows") or 24),
+                    int(payload.get("cols") or 80),
+                )
                 continue
             if msg_type == "scroll":
                 _scroll_tmux_history(session_name, str(payload.get("direction") or ""), int(payload.get("lines") or 1))
@@ -1691,6 +1810,97 @@ app = FastAPI(title="LUCID", lifespan=lifespan)
 
 
 # ---------- routes ----------
+
+@app.middleware("http")
+async def hub_auth_middleware(request: Request, call_next):
+    if not _is_hub_mode() or _hub_auth_public_path(request.url.path):
+        return await call_next(request)
+    try:
+        authenticated = _hub_session_valid(request.cookies.get(COOKIE_NAME))
+    except AuthConfigError:
+        return JSONResponse(
+            {"detail": "authentication configuration is unavailable"},
+            status_code=503,
+        )
+    if authenticated:
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page() -> HTMLResponse:
+    html = read_utf8(STATIC_DIR / "login.html")
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/auth/status")
+def api_auth_status(request: Request) -> Response:
+    _require_hub_mode()
+    try:
+        configured = hub_auth_manager.is_configured()
+        authenticated = configured and hub_auth_manager.verify_session(request.cookies.get(COOKIE_NAME))
+    except AuthConfigError:
+        return JSONResponse(
+            {"detail": "authentication configuration is unavailable"},
+            status_code=503,
+        )
+    return JSONResponse({"configured": configured, "authenticated": authenticated})
+
+
+@app.post("/api/auth/setup")
+def api_auth_setup(request: Request, payload: dict = Body(...)) -> Response:
+    _require_hub_mode()
+    password = payload.get("password")
+    confirmation = payload.get("confirm")
+    if not isinstance(password, str) or password != confirmation:
+        raise HTTPException(400, "password confirmation does not match")
+    try:
+        hub_auth_manager.setup_password(password)
+        session_token = hub_auth_manager.create_session()
+    except PasswordPolicyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except AlreadyConfiguredError as exc:
+        raise HTTPException(409, "password is already configured") from exc
+    except AuthConfigError as exc:
+        raise HTTPException(503, "authentication configuration is unavailable") from exc
+    response = JSONResponse({"ok": True})
+    _set_hub_session_cookie(response, request, session_token)
+    return response
+
+
+@app.post("/api/auth/login")
+def api_auth_login(request: Request, payload: dict = Body(...)) -> Response:
+    _require_hub_mode()
+    password = payload.get("password")
+    if not isinstance(password, str):
+        raise HTTPException(401, "invalid password")
+    try:
+        if not hub_auth_manager.is_configured():
+            raise HTTPException(409, "password setup is required")
+        session_token = hub_auth_manager.login(password, _hub_auth_client_key(request))
+    except InvalidCredentialsError as exc:
+        raise HTTPException(401, "invalid password") from exc
+    except LoginRateLimitedError as exc:
+        return JSONResponse(
+            {"detail": "too many login attempts; try again later"},
+            status_code=429,
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+    except AuthConfigError as exc:
+        raise HTTPException(503, "authentication configuration is unavailable") from exc
+    response = JSONResponse({"ok": True})
+    _set_hub_session_cookie(response, request, session_token)
+    return response
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout() -> Response:
+    _require_hub_mode()
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="lax")
+    return response
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
@@ -2445,6 +2655,8 @@ def api_node_terminal_input(node_id: str, platform: str, pid: int, payload: dict
 
 @app.websocket("/api/nodes/{node_id}/windows/{platform}/{pid}/terminal/ws")
 async def api_node_terminal_ws(websocket: WebSocket, node_id: str, platform: str, pid: int, cols: int = 80, rows: int = 24) -> None:
+    if not await _authenticate_hub_websocket(websocket):
+        return
     node = nodes.node_by_id(node_id)
     if not node:
         await websocket.accept()
@@ -2460,6 +2672,8 @@ async def api_node_terminal_ws(websocket: WebSocket, node_id: str, platform: str
 
 @app.websocket("/api/nodes/{node_id}/editor-terminals/{tmux_session}/terminal/ws")
 async def api_node_editor_terminal_ws(websocket: WebSocket, node_id: str, tmux_session: str, cols: int = 80, rows: int = 24) -> None:
+    if not await _authenticate_hub_websocket(websocket):
+        return
     node = nodes.node_by_id(node_id)
     if not node:
         await websocket.accept()
@@ -2546,6 +2760,29 @@ def api_node_session_fork(node_id: str, platform: str, session_id: str) -> dict:
     data = nodes.forward(node_id, "POST", f"/agent/v1/sessions/{platform}/{session_id}/fork")
     if data.get("ok"):
         nodes.invalidate_snapshot_cache(node_id)
+    return data
+
+
+@app.delete("/api/nodes/{node_id}/sessions/{platform}/{session_id}")
+def api_node_session_delete(node_id: str, platform: str, session_id: str) -> dict:
+    node = _configured_node(node_id)
+    if node.kind == "local":
+        return _delete_local_history_session(platform, session_id)
+    encoded_platform = urllib.parse.quote(platform, safe="")
+    encoded_session_id = urllib.parse.quote(session_id, safe="")
+    data = nodes.forward(
+        node_id,
+        "DELETE",
+        f"/agent/v1/sessions/{encoded_platform}/{encoded_session_id}",
+    )
+    if not data.get("ok", False):
+        error = str(data.get("error") or "remote session delete failed")
+        if "HTTP 409" in error:
+            raise HTTPException(409, error)
+        if "HTTP 404" in error:
+            raise HTTPException(404, error)
+        raise HTTPException(502, error)
+    nodes.invalidate_snapshot_cache(node_id)
     return data
 
 
@@ -2785,6 +3022,12 @@ def agent_session_fork(platform: str, session_id: str, authorization: str | None
     return _agent_resume_or_fork(platform, session_id, fork=True)
 
 
+@app.delete("/agent/v1/sessions/{platform}/{session_id}")
+def agent_session_delete(platform: str, session_id: str, authorization: str | None = Header(None)) -> dict:
+    _require_agent_auth(authorization)
+    return _delete_local_history_session(platform, session_id)
+
+
 @app.post("/agent/v1/launch")
 def agent_launch(payload: dict = Body(...), authorization: str | None = Header(None)) -> dict:
     _require_agent_auth(authorization)
@@ -2926,6 +3169,14 @@ def api_history_fork(session_id: str) -> dict:
     if not sess:
         return {"ok": False, "error": "session not found in index"}
     return _agent_resume_or_fork(sess.get("platform", "claude"), session_id, fork=True)
+
+
+@app.delete("/api/history/{session_id}")
+def api_history_delete(session_id: str) -> dict:
+    sess = _local_history_session(session_id)
+    if not sess:
+        raise HTTPException(404, "session not found")
+    return _delete_local_history_session(sess.get("platform", "claude"), session_id)
 
 
 @app.get("/api/skills/{name}/sessions")
