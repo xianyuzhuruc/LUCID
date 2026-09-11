@@ -353,7 +353,7 @@ def _run(client: paramiko.SSHClient, command: str, check: bool = True, timeout: 
     err = decode_utf8(stderr.read())
     if check and rc != 0:
         raise RuntimeError(f"remote command failed rc={rc}: {command}\nstdout={out[-2000:]}\nstderr={err[-2000:]}")
-    return out + err
+    return out
 
 
 def _remote_expand(client: paramiko.SSHClient, path: str) -> str:
