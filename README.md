@@ -170,7 +170,7 @@ deep-link directly to a search or a specific session timeline.
 
 ### Prerequisites
 
-- Python 3.10+
+- curl or wget, plus tar (for the bundled Python download)
 - tmux
 - Bash (Linux / macOS) or `run.bat` (Windows)
 
@@ -184,8 +184,10 @@ bash run.sh
 
 Open **http://127.0.0.1:21893** in your browser.
 
-`run.sh` creates a virtual environment, installs dependencies, and starts the
-server. To use a different port:
+On Linux and macOS, the first `run.sh` launch downloads a project-local Python
+3.11 runtime into `.lucid-runtime`, creates a virtual environment from that
+runtime, installs dependencies, and starts the server. It does not require the
+system Python. To use a different port:
 
 ```bash
 LUCID_PORT=21894 bash run.sh

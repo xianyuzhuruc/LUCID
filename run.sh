@@ -32,8 +32,12 @@ if [ "${MODE}" = "agent" ]; then
     fi
 fi
 
-PYTHON_CMD="${LUCID_PYTHON:-python3}"
-read -r -a PYTHON_BIN <<< "$PYTHON_CMD"
+if [ -n "${LUCID_PYTHON:-}" ]; then
+    read -r -a PYTHON_BIN <<< "$LUCID_PYTHON"
+else
+    RUNTIME_PYTHON="$(sh scripts/bootstrap-python.sh)"
+    PYTHON_BIN=("$RUNTIME_PYTHON")
+fi
 RUNTIME_IMPORT_CHECK="import fastapi, uvicorn"
 if [ "${RELOAD}" = "1" ]; then
     RUNTIME_IMPORT_CHECK="${RUNTIME_IMPORT_CHECK}, watchfiles"
