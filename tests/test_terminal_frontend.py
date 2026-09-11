@@ -32,6 +32,54 @@ class TerminalFrontendTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
+    def test_node_card_exposes_deploy_npm_button(self) -> None:
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertIn("Deploy NPM", html)
+        self.assertIn('@click.stop="deployNpm(n)"', html)
+
+    def test_deploy_npm_tracks_each_node_job_and_result(self) -> None:
+        self.run_javascript(
+            """
+globalThis.setTimeout = callback => { callback(); return 1; };
+const requests = [];
+globalThis.fetch = async (url, options = {}) => {
+  requests.push({ url, method: options.method || 'GET' });
+  if ((options.method || 'GET') === 'POST') {
+    return {
+      ok: true,
+      async text() {
+        return JSON.stringify({ ok: true, job_id: 'npm-job-a', status: 'queued', step: 'queued', message: 'NPM deployment queued' });
+      },
+    };
+  }
+  return {
+    ok: true,
+    async text() {
+      return JSON.stringify({
+        ok: true,
+        job_id: 'npm-job-a',
+        status: 'succeeded',
+        step: 'complete',
+        message: 'NPM deployment complete',
+        result: { node_id: 'node-a', nvm_version: '0.40.7', node_version: 'v24.14.0', npm_version: '11.9.0' },
+      });
+    },
+  };
+};
+
+const dashboard = superCliTerminal();
+await dashboard.deployNpm({ id: 'node-a', name: 'Node A', kind: 'ssh' });
+
+assert.deepEqual(requests, [
+  { url: '/api/nodes/node-a/deploy-npm', method: 'POST' },
+  { url: '/api/nodes/deploy/jobs/npm-job-a', method: 'GET' },
+]);
+assert.equal(dashboard.npmDeployBusy['node-a'], false);
+assert.equal(dashboard.npmDeployResults['node-a'].status, 'succeeded');
+assert.match(dashboard.npmDeployResults['node-a'].summary, /node v24\.14\.0 · npm 11\.9\.0/);
+"""
+        )
+
     def test_hidden_terminal_container_retries_fit_when_it_becomes_visible(self) -> None:
         self.run_javascript(
             """

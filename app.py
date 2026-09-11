@@ -47,6 +47,7 @@ from core.hub.auth import (
     LoginRateLimitedError,
     PasswordPolicyError,
 )
+from core.hub.npm_deploy import deploy_npm_for_node
 from core.hub.skills_sync import (
     build_agent_skills_tarball_raw,
     build_skills_tarball_bytes,
@@ -145,6 +146,11 @@ DEPLOY_STEP_ACTIONS = {
     "health_check": "Waiting for the remote agent health endpoint.",
     "persist_config": "Writing hub node configuration.",
     "verify_tunnel": "Opening the local SSH tunnel and checking the agent through it.",
+    "npm_connect": "Waiting for SSH to connect or fail.",
+    "npm_prepare_local": "Preparing the Hub user's local shell environment.",
+    "npm_install_nvm": "Downloading and installing the latest nvm release.",
+    "npm_install_node": "Loading .bashrc and installing the latest Node.js and npm.",
+    "npm_verify": "Checking the installed nvm, Node.js, and npm versions.",
     "complete": "Refresh the node list or launch a managed process.",
     "failed": "Read the error, fix the reported issue, and retry deploy.",
 }
@@ -2373,6 +2379,40 @@ def _start_local_deploy_job() -> dict:
     return _deploy_job_payload(job)
 
 
+def _run_npm_deploy_job(job_id: str, node: nodes.NodeConfig) -> None:
+    try:
+        result = deploy_npm_for_node(
+            node,
+            progress=lambda step, message: _set_deploy_job_progress(job_id, "running", step, message),
+        )
+        with DEPLOY_JOBS_LOCK:
+            DEPLOY_JOBS[job_id].result = result
+        _set_deploy_job_progress(job_id, "succeeded", "complete", "NPM deployment complete")
+    except Exception as exc:
+        with DEPLOY_JOBS_LOCK:
+            DEPLOY_JOBS[job_id].error = f"{type(exc).__name__}: {exc}"
+        _set_deploy_job_progress(job_id, "failed", "failed", "NPM deployment failed")
+
+
+def _start_npm_deploy_job(node: nodes.NodeConfig) -> dict:
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    job = DeployJob(
+        id=job_id,
+        status="queued",
+        step="queued",
+        message="NPM deployment queued",
+        next_action=_deploy_next_action("queued"),
+        started_at=now,
+        updated_at=now,
+        events=[{"ts": now, "step": "queued", "message": "NPM deployment queued"}],
+    )
+    _store_deploy_job(job)
+    thread = threading.Thread(target=_run_npm_deploy_job, args=(job_id, node), daemon=True)
+    thread.start()
+    return _deploy_job_payload(job)
+
+
 @app.post("/api/nodes/deploy")
 def api_node_deploy(payload: dict = Body(...)) -> dict:
     try:
@@ -2456,6 +2496,14 @@ def api_node_deploy_job(job_id: str) -> dict:
     if job is None:
         raise HTTPException(404, f"deploy job not found: {job_id}")
     return _deploy_job_payload(job)
+
+
+@app.post("/api/nodes/{node_id}/deploy-npm")
+def api_node_deploy_npm(node_id: str) -> dict:
+    node = _configured_node(node_id)
+    if node.kind != "ssh" and not _is_local_enabled_node(node):
+        raise HTTPException(400, f"node {node_id} does not support npm deployment")
+    return _start_npm_deploy_job(node)
 
 
 @app.post("/api/nodes/{node_id}/launch")

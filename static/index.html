@@ -376,17 +376,28 @@
               <span x-show="!n.local_port && n.kind === 'agent' && n.agent_port" x-text="'127.0.0.1:' + n.agent_port"></span>
             </div>
             <div class="mt-1 flex items-center gap-2">
-              <div class="text-[11px] text-red-600 truncate flex-1" x-show="n.error" x-text="n.error"></div>
+              <div class="min-w-0 flex-1">
+                <div class="text-[11px] text-red-600 truncate" x-show="n.error" x-text="n.error"></div>
+                <div class="truncate text-[10px]"
+                     x-show="npmDeployResults[n.id]"
+                     :class="(npmDeployResults[n.id] || {}).status === 'failed' ? 'text-red-600 dark:text-red-400' : (npmDeployResults[n.id] || {}).status === 'succeeded' ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'"
+                     x-text="(npmDeployResults[n.id] || {}).summary || ''"></div>
+              </div>
               <div class="ml-auto flex gap-1.5">
-              <button @click="removeNode(n)"
-                      :disabled="removingNodeId === n.id || deletingNodeId === n.id"
-                      class="shrink-0 rounded border border-red-300 bg-red-50 dark:bg-gray-700 px-2 py-0.5 text-[10px] text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40"
-                      x-text="removingNodeId === n.id ? 'Removing...' : 'Remove'"
-                      x-show="n.kind === 'ssh' || isLocalNode(n)"></button>
-              <button @click="deleteNode(n)"
-                      :disabled="deletingNodeId === n.id || removingNodeId === n.id"
-                      class="shrink-0 rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-0.5 text-[10px] text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
-                      x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"></button>
+                <button @click.stop="deployNpm(n)"
+                        :disabled="!!npmDeployBusy[n.id] || removingNodeId === n.id || deletingNodeId === n.id"
+                        class="shrink-0 rounded border border-emerald-200 bg-white dark:bg-gray-700 px-2 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 disabled:opacity-40"
+                        x-text="npmDeployBusy[n.id] ? 'Deploying...' : 'Deploy NPM'"
+                        x-show="n.kind === 'ssh' || isLocalNode(n)"></button>
+                <button @click="removeNode(n)"
+                        :disabled="removingNodeId === n.id || deletingNodeId === n.id || !!npmDeployBusy[n.id]"
+                        class="shrink-0 rounded border border-red-300 bg-red-50 dark:bg-gray-700 px-2 py-0.5 text-[10px] text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40"
+                        x-text="removingNodeId === n.id ? 'Removing...' : 'Remove'"
+                        x-show="n.kind === 'ssh' || isLocalNode(n)"></button>
+                <button @click="deleteNode(n)"
+                        :disabled="deletingNodeId === n.id || removingNodeId === n.id || !!npmDeployBusy[n.id]"
+                        class="shrink-0 rounded border border-red-200 bg-white dark:bg-gray-700 px-2 py-0.5 text-[10px] text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
+                        x-text="deletingNodeId === n.id ? 'Deleting...' : 'Delete'"></button>
               </div>
             </div>
           </div>
@@ -1833,6 +1844,8 @@ function superCliTerminal() {
     dragOverDir: null,
     deletingNodeId: null,
     removingNodeId: null,
+    npmDeployBusy: {},
+    npmDeployResults: {},
     deploying: false,
     syncingNodes: false,
     syncJobs: [],
@@ -5761,6 +5774,65 @@ function superCliTerminal() {
           await this.refreshNodes();
           return;
         }
+      }
+    },
+
+    npmDeploySummary(status) {
+      if (status.status === 'succeeded') {
+        const result = status.result || {};
+        return `nvm ${result.nvm_version || '?'} · node ${result.node_version || '?'} · npm ${result.npm_version || '?'}`;
+      }
+      if (status.status === 'failed') return status.error || status.message || 'NPM deployment failed';
+      return status.message || 'NPM deployment running';
+    },
+
+    async deployNpm(node) {
+      const nodeId = node?.id;
+      if (!nodeId || this.npmDeployBusy[nodeId]) return;
+      this.npmDeployBusy = { ...this.npmDeployBusy, [nodeId]: true };
+      this.npmDeployResults = {
+        ...this.npmDeployResults,
+        [nodeId]: { status: 'starting', summary: 'Starting NPM deployment...' },
+      };
+      try {
+        const response = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/deploy-npm`, { method: 'POST' });
+        let status = await this.readJsonResponse(response);
+        if (!response.ok || !status.ok || !status.job_id) {
+          throw new Error(this.responseError(response, status, 'NPM deployment failed to start'));
+        }
+        this.npmDeployResults = {
+          ...this.npmDeployResults,
+          [nodeId]: { ...status, summary: this.npmDeploySummary(status) },
+        };
+        while (this.npmDeployBusy[nodeId]) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const pollResponse = await fetch(`/api/nodes/deploy/jobs/${encodeURIComponent(status.job_id)}`);
+          status = await this.readJsonResponse(pollResponse);
+          if (!pollResponse.ok) {
+            throw new Error(this.responseError(pollResponse, status, 'NPM deployment status failed'));
+          }
+          this.npmDeployResults = {
+            ...this.npmDeployResults,
+            [nodeId]: { ...status, summary: this.npmDeploySummary(status) },
+          };
+          if (status.status === 'succeeded') {
+            this.toast(`NPM deployed on ${node.name || nodeId}: ${this.npmDeploySummary(status)}`, 6000);
+            return;
+          }
+          if (status.status === 'failed') {
+            this.toast(`NPM deploy failed on ${node.name || nodeId}: ${status.error || 'unknown error'}`, 10000);
+            return;
+          }
+        }
+      } catch (error) {
+        const message = String(error.message || error);
+        this.npmDeployResults = {
+          ...this.npmDeployResults,
+          [nodeId]: { status: 'failed', error: message, summary: message },
+        };
+        this.toast(`NPM deploy failed on ${node.name || nodeId}: ${message}`, 10000);
+      } finally {
+        this.npmDeployBusy = { ...this.npmDeployBusy, [nodeId]: false };
       }
     },
 
