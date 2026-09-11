@@ -430,6 +430,39 @@
             <option value="codex">codex</option>
             <option value="claude">claude</option>
           </select>
+          <input x-show="launchForm.platform === 'codex'"
+                 x-cloak
+                 class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200"
+                 list="codex-model-suggestions"
+                 placeholder="model (blank = config default)"
+                 x-model="launchForm.model"
+                 @input="launchForm.model = $event.target.value; updateCodexLaunchCommand()">
+          <datalist id="codex-model-suggestions">
+            <option value="gpt-6-astra">
+            <option value="gpt-5.6">
+            <option value="gpt-5.6-sol">
+            <option value="gpt-5.6-terra">
+            <option value="gpt-5.6-luna">
+            <option value="gpt-5.5">
+            <option value="gpt-5.4">
+            <option value="gpt-5.3-codex">
+            <option value="gpt-5.2-codex">
+            <option value="deepseek-flash">
+          </datalist>
+          <select x-show="launchForm.platform === 'codex'"
+                  x-cloak
+                  class="border dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200"
+                  x-model="launchForm.reasoning_effort"
+                  @change="launchForm.reasoning_effort = $event.target.value; updateCodexLaunchCommand()">
+            <option value="">reasoning (config default)</option>
+            <option value="none">none</option>
+            <option value="minimal">minimal</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="max">max</option>
+          </select>
           <div class="col-span-2 flex gap-2">
             <input class="border dark:border-gray-600 rounded px-2 py-1 flex-1 min-w-0 dark:bg-gray-700 dark:text-gray-200" placeholder="working directory (blank = home)"
                    x-model="launchForm.cwd" @keydown.enter.prevent="openPathBrowser()">
@@ -1830,7 +1863,10 @@ function superCliTerminal() {
       name: '',
       cwd: '',
       command: 'codex',
+      model: '',
+      reasoning_effort: '',
     },
+    launchCodexGeneratedOptions: '',
     pathBrowser: {
       open: false,
       loading: false,
@@ -5068,10 +5104,91 @@ function superCliTerminal() {
     },
 
     handleLaunchPlatformChange() {
-      const current = (this.launchForm.command || '').trim();
+      let current = (this.launchForm.command || '').trim();
+      if (this.launchForm.platform !== 'codex') {
+        current = this.commandWithoutGeneratedCodexOptions(current);
+        this.launchCodexGeneratedOptions = '';
+      }
       if (!current || current === 'codex' || current === 'claude') {
         this.launchForm.command = this.launchForm.platform;
+      } else {
+        this.launchForm.command = current;
       }
+      if (this.launchForm.platform === 'codex') this.updateCodexLaunchCommand();
+    },
+
+    splitLaunchCommand(command) {
+      const source = String(command || '').trim();
+      let quote = '';
+      let escaped = false;
+      for (let index = 0; index < source.length; index += 1) {
+        const character = source[index];
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (character === '\\' && quote !== "'") {
+          escaped = true;
+          continue;
+        }
+        if (quote) {
+          if (character === quote) quote = '';
+          continue;
+        }
+        if (character === "'" || character === '"') {
+          quote = character;
+          continue;
+        }
+        if (/\s/.test(character)) {
+          return {
+            executable: source.slice(0, index),
+            remainder: source.slice(index).trim(),
+          };
+        }
+      }
+      return { executable: source, remainder: '' };
+    },
+
+    commandWithoutGeneratedCodexOptions(command) {
+      const source = String(command || '').trim();
+      const generated = this.launchCodexGeneratedOptions;
+      if (!source || !generated) return source;
+      const parts = this.splitLaunchCommand(source);
+      if (parts.remainder === generated) return parts.executable;
+      if (parts.remainder.startsWith(generated + ' ')) {
+        return `${parts.executable} ${parts.remainder.slice(generated.length).trim()}`.trim();
+      }
+      return source;
+    },
+
+    shellQuoteLaunchArg(value) {
+      const text = String(value || '');
+      return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text) ? text : this.shellSingleQuote(text);
+    },
+
+    updateCodexLaunchCommand() {
+      if (this.launchForm.platform !== 'codex') return;
+      const baseCommand = this.commandWithoutGeneratedCodexOptions(this.launchForm.command) || 'codex';
+      const model = (this.launchForm.model || '').trim();
+      const reasoningEffort = (this.launchForm.reasoning_effort || '').trim();
+      const options = [];
+      if (model) options.push('--model', this.shellQuoteLaunchArg(model));
+      if (reasoningEffort) {
+        options.push(
+          '--config',
+          this.shellQuoteLaunchArg(`model_reasoning_effort="${reasoningEffort}"`),
+        );
+      }
+      const generated = options.join(' ');
+      this.launchCodexGeneratedOptions = generated;
+      if (!generated) {
+        this.launchForm.command = baseCommand;
+        return;
+      }
+      const parts = this.splitLaunchCommand(baseCommand);
+      this.launchForm.command = [parts.executable, generated, parts.remainder]
+        .filter(Boolean)
+        .join(' ');
     },
 
     async togglePathBrowser() {

@@ -301,6 +301,152 @@ assert.equal(dashboard.isHistorySessionActive({
 """
         )
 
+    def test_codex_launch_exposes_editable_model_suggestions_and_max_effort(self) -> None:
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        start = html.index("<h3 class=\"text-xs font-semibold mb-2\">Launch managed process</h3>")
+        end = html.index("<button @click=\"launchManaged()\"", start)
+        launch_panel = html[start:end]
+
+        self.assertIn('x-model="launchForm.model"', launch_panel)
+        self.assertIn(
+            '@input="launchForm.model = $event.target.value; updateCodexLaunchCommand()"',
+            launch_panel,
+        )
+        self.assertIn('list="codex-model-suggestions"', launch_panel)
+        self.assertIn('<datalist id="codex-model-suggestions">', launch_panel)
+        self.assertIn('<option value="gpt-5.6-sol">', launch_panel)
+        self.assertIn('<option value="deepseek-flash">', launch_panel)
+        self.assertNotIn("deepseek-v4-flash", launch_panel)
+        self.assertIn('x-model="launchForm.reasoning_effort"', launch_panel)
+        self.assertIn(
+            '@change="launchForm.reasoning_effort = $event.target.value; updateCodexLaunchCommand()"',
+            launch_panel,
+        )
+        self.assertIn('<option value="max">max</option>', launch_panel)
+
+    def test_codex_launch_omits_blank_model_overrides(self) -> None:
+        self.run_javascript(
+            """
+const requests = [];
+globalThis.fetch = async (url, options) => {
+  requests.push({ url, options });
+  return {
+    ok: true,
+    async text() { return JSON.stringify({ ok: true, tmux_session: 'codex-defaults' }); },
+  };
+};
+const dashboard = superCliTerminal();
+assert.equal(dashboard.launchForm.model, '');
+assert.equal(dashboard.launchForm.reasoning_effort, '');
+dashboard.launchForm.node_id = 'local';
+dashboard.openLaunchedTerminal = async () => {};
+dashboard.toast = () => {};
+
+await dashboard.launchManaged();
+
+const payload = JSON.parse(requests[0].options.body);
+assert.equal(payload.command, 'codex');
+assert.equal(Object.hasOwn(payload, 'model'), false);
+assert.equal(Object.hasOwn(payload, 'reasoning_effort'), false);
+"""
+        )
+
+    def test_codex_launch_writes_model_and_effort_into_command(self) -> None:
+        self.run_javascript(
+            """
+const requests = [];
+globalThis.fetch = async (url, options) => {
+  requests.push({ url, options });
+  return {
+    ok: true,
+    async text() { return JSON.stringify({ ok: true, tmux_session: 'codex-custom' }); },
+  };
+};
+const dashboard = superCliTerminal();
+dashboard.launchForm.node_id = 'worker-1';
+dashboard.launchForm.model = '  deepseek-flash  ';
+dashboard.launchForm.reasoning_effort = 'max';
+assert.equal(typeof dashboard.updateCodexLaunchCommand, 'function');
+dashboard.updateCodexLaunchCommand();
+dashboard.openLaunchedTerminal = async () => {};
+dashboard.toast = () => {};
+
+assert.equal(
+  dashboard.launchForm.command,
+  `codex --model deepseek-flash --config 'model_reasoning_effort="max"'`,
+);
+await dashboard.launchManaged();
+
+const payload = JSON.parse(requests[0].options.body);
+assert.equal(
+  payload.command,
+  `codex --model deepseek-flash --config 'model_reasoning_effort="max"'`,
+);
+assert.equal(Object.hasOwn(payload, 'model'), false);
+assert.equal(Object.hasOwn(payload, 'reasoning_effort'), false);
+"""
+        )
+
+    def test_codex_launch_replaces_generated_options_without_losing_custom_arguments(self) -> None:
+        self.run_javascript(
+            """
+const dashboard = superCliTerminal();
+assert.equal(typeof dashboard.updateCodexLaunchCommand, 'function');
+dashboard.launchForm.command = 'codex resume session-1';
+dashboard.launchForm.model = 'deepseek-flash';
+dashboard.launchForm.reasoning_effort = 'max';
+
+dashboard.updateCodexLaunchCommand();
+assert.equal(
+  dashboard.launchForm.command,
+  `codex --model deepseek-flash --config 'model_reasoning_effort="max"' resume session-1`,
+);
+
+dashboard.launchForm.model = 'gpt-5.6-sol';
+dashboard.launchForm.reasoning_effort = 'high';
+dashboard.updateCodexLaunchCommand();
+assert.equal(
+  dashboard.launchForm.command,
+  `codex --model gpt-5.6-sol --config 'model_reasoning_effort="high"' resume session-1`,
+);
+assert.equal((dashboard.launchForm.command.match(/--model/g) || []).length, 1);
+assert.equal((dashboard.launchForm.command.match(/model_reasoning_effort/g) || []).length, 1);
+
+dashboard.launchForm.model = '';
+dashboard.launchForm.reasoning_effort = '';
+dashboard.updateCodexLaunchCommand();
+assert.equal(dashboard.launchForm.command, 'codex resume session-1');
+"""
+        )
+
+    def test_claude_launch_ignores_stale_codex_overrides(self) -> None:
+        self.run_javascript(
+            """
+const requests = [];
+globalThis.fetch = async (url, options) => {
+  requests.push({ url, options });
+  return {
+    ok: true,
+    async text() { return JSON.stringify({ ok: true, tmux_session: 'claude-default' }); },
+  };
+};
+const dashboard = superCliTerminal();
+dashboard.launchForm.node_id = 'local';
+dashboard.launchForm.platform = 'claude';
+dashboard.launchForm.command = 'claude';
+dashboard.launchForm.model = 'deepseek-flash';
+dashboard.launchForm.reasoning_effort = 'max';
+dashboard.openLaunchedTerminal = async () => {};
+dashboard.toast = () => {};
+
+await dashboard.launchManaged();
+
+const payload = JSON.parse(requests[0].options.body);
+assert.equal(Object.hasOwn(payload, 'model'), false);
+assert.equal(Object.hasOwn(payload, 'reasoning_effort'), false);
+"""
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
