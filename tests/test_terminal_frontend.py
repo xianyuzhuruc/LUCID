@@ -364,6 +364,9 @@ assert.equal(dashboard.isHistorySessionActive({
         self.assertIn('<datalist id="codex-model-suggestions">', launch_panel)
         self.assertIn('<option value="gpt-5.6-sol">', launch_panel)
         self.assertIn('<option value="deepseek-flash">', launch_panel)
+        self.assertNotIn('<option value="gpt-5.4">', launch_panel)
+        self.assertNotIn('<option value="gpt-5.3-codex">', launch_panel)
+        self.assertNotIn('<option value="gpt-5.2-codex">', launch_panel)
         self.assertNotIn("deepseek-v4-flash", launch_panel)
         self.assertIn('x-model="launchForm.reasoning_effort"', launch_panel)
         self.assertIn(
@@ -421,17 +424,37 @@ dashboard.toast = () => {};
 
 assert.equal(
   dashboard.launchForm.command,
-  `codex --model deepseek-flash --config 'model_reasoning_effort="max"'`,
+  `codex --model deepseek-flash --config 'model_reasoning_effort="max"' --config 'model_catalog_json="~/.codex/models.json"' --config 'model_provider="deepseek"'`,
 );
 await dashboard.launchManaged();
 
 const payload = JSON.parse(requests[0].options.body);
 assert.equal(
   payload.command,
-  `codex --model deepseek-flash --config 'model_reasoning_effort="max"'`,
+  `codex --model deepseek-flash --config 'model_reasoning_effort="max"' --config 'model_catalog_json="~/.codex/models.json"' --config 'model_provider="deepseek"'`,
 );
 assert.equal(Object.hasOwn(payload, 'model'), false);
 assert.equal(Object.hasOwn(payload, 'reasoning_effort'), false);
+"""
+        )
+
+    def test_deepseek_catalog_config_is_added_without_reasoning_override(self) -> None:
+        self.run_javascript(
+            """
+const dashboard = superCliTerminal();
+dashboard.launchForm.command = 'codex';
+dashboard.launchForm.model = 'deepseek-flash';
+dashboard.launchForm.reasoning_effort = '';
+dashboard.updateCodexLaunchCommand();
+assert.equal(
+  dashboard.launchForm.command,
+  `codex --model deepseek-flash --config 'model_catalog_json="~/.codex/models.json"' --config 'model_provider="deepseek"'`,
+);
+
+dashboard.launchForm.model = 'gpt-5.6';
+dashboard.updateCodexLaunchCommand();
+assert.equal(dashboard.launchForm.command, 'codex --model gpt-5.6');
+assert.equal(dashboard.launchForm.command.includes('model_catalog_json'), false);
 """
         )
 
@@ -447,7 +470,7 @@ dashboard.launchForm.reasoning_effort = 'max';
 dashboard.updateCodexLaunchCommand();
 assert.equal(
   dashboard.launchForm.command,
-  `codex --model deepseek-flash --config 'model_reasoning_effort="max"' resume session-1`,
+  `codex --model deepseek-flash --config 'model_reasoning_effort="max"' --config 'model_catalog_json="~/.codex/models.json"' --config 'model_provider="deepseek"' resume session-1`,
 );
 
 dashboard.launchForm.model = 'gpt-5.6-sol';

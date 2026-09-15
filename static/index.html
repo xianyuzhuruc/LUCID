@@ -455,9 +455,6 @@
             <option value="gpt-5.6-terra">
             <option value="gpt-5.6-luna">
             <option value="gpt-5.5">
-            <option value="gpt-5.4">
-            <option value="gpt-5.3-codex">
-            <option value="gpt-5.2-codex">
             <option value="deepseek-flash">
           </datalist>
           <select x-show="launchForm.platform === 'codex'"
@@ -5190,6 +5187,14 @@ function superCliTerminal() {
         options.push(
           '--config',
           this.shellQuoteLaunchArg(`model_reasoning_effort="${reasoningEffort}"`),
+        );
+      }
+      if (model.toLowerCase().startsWith('deepseek')) {
+        options.push(
+          '--config',
+          this.shellQuoteLaunchArg('model_catalog_json="~/.codex/models.json"'),
+          '--config',
+          this.shellQuoteLaunchArg('model_provider="deepseek"'),
         );
       }
       const generated = options.join(' ');
