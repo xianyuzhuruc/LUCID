@@ -362,8 +362,7 @@ assert.equal(dashboard.isHistorySessionActive({
         )
         self.assertIn('list="codex-model-suggestions"', launch_panel)
         self.assertIn('<datalist id="codex-model-suggestions">', launch_panel)
-        self.assertIn('<option value="gpt-5.6-sol">', launch_panel)
-        self.assertIn('<option value="deepseek-flash">', launch_panel)
+        self.assertIn('<option :value="model"></option>', launch_panel)
         self.assertNotIn('<option value="gpt-5.4">', launch_panel)
         self.assertNotIn('<option value="gpt-5.3-codex">', launch_panel)
         self.assertNotIn('<option value="gpt-5.2-codex">', launch_panel)
@@ -374,6 +373,46 @@ assert.equal(dashboard.isHistorySessionActive({
             launch_panel,
         )
         self.assertIn('<option value="max">max</option>', launch_panel)
+
+    def test_codex_model_suggestions_can_be_added_removed_and_restored(self) -> None:
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        start = html.index("<h3 class=\"text-xs font-semibold mb-2\">Launch managed process</h3>")
+        end = html.index("<button @click=\"launchManaged()\"", start)
+        launch_panel = html[start:end]
+
+        self.assertIn('x-for="model in codexModels"', launch_panel)
+        self.assertIn('x-model="newModelName"', launch_panel)
+        self.assertIn('@click="addCodexModel()"', launch_panel)
+        self.assertIn('@click="removeCodexModel(model)"', launch_panel)
+
+        self.run_javascript(
+            """
+const storage = new Map([
+  ['lucid-codex-model-suggestions-v1', JSON.stringify(['gpt-5.6-sol', 'custom-model', 'custom-model', ''])],
+]);
+globalThis.localStorage = {
+  getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+  setItem(key, value) { storage.set(key, String(value)); },
+};
+
+const dashboard = superCliTerminal();
+dashboard.loadCodexModels();
+assert.deepEqual(dashboard.codexModels, ['gpt-5.6-sol', 'custom-model']);
+assert.equal(dashboard.addCodexModel('  deepseek-r2  '), true);
+assert.equal(dashboard.addCodexModel('deepseek-r2'), false);
+assert.equal(dashboard.addCodexModel('   '), false);
+assert.equal(dashboard.newModelName, '');
+assert.deepEqual(dashboard.codexModels, ['gpt-5.6-sol', 'custom-model', 'deepseek-r2']);
+dashboard.removeCodexModel('custom-model');
+assert.deepEqual(dashboard.codexModels, ['gpt-5.6-sol', 'deepseek-r2']);
+assert.equal(
+  storage.get('lucid-codex-model-suggestions-v1'),
+  JSON.stringify(['gpt-5.6-sol', 'deepseek-r2']),
+);
+dashboard.resetCodexModels();
+assert.deepEqual(dashboard.codexModels, ['gpt-6-astra', 'gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'deepseek-flash']);
+"""
+        )
 
     def test_codex_launch_omits_blank_model_overrides(self) -> None:
         self.run_javascript(
